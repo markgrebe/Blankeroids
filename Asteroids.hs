@@ -18,6 +18,7 @@ import Control.Monad.Random
 import IdentityList
 
 import Debug.Trace
+import Debug.Hood.Observe
 
 ---------------------------------------------------
 type Position = Vector2 Double
@@ -33,14 +34,16 @@ data Object = Asteroid { pos    :: Position,
                          angPos :: AngPosition,
                          angVel :: AngVelocity,
                          radius :: Double,
-                         gen    :: Int
+                         gen    :: Int,
+                         done   :: Event ()
                        }
             | Ship     { pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
                          radius :: Double,
                          thrusting :: Bool,
-                         fire   :: Event ()
+                         fire   :: Event (),
+                         done   :: Event ()
                        }
             | Missile  { pos    :: Position,
                          vel    :: Velocity,
@@ -52,8 +55,8 @@ type SFObject = SF (Event KeyEvent) Object
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ -> True
-    _                -> False
+    Ship _ _ _ _ _ _ _ -> True
+    _                  -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
@@ -68,7 +71,7 @@ asterGen1Rad  = 0.064
 shipThrust    = 10.0
 shipDrag      = 3.0
 missileVel    = 0.5
-missileLife   = 0.1
+missileLife   = 1.0
 
 initAsteroid :: RandomGen g => Rand g Object
 initAsteroid = do
@@ -93,7 +96,8 @@ initAsteroid = do
                         angPos = 0.0,
                         angVel = -0.5,
                         gen    = 0,
-                        radius = asterGen1Rad
+                        radius = asterGen1Rad,
+                        done   = NoEvent
                     }
   where
     inCenter :: (Double, Double) -> Bool
@@ -108,7 +112,7 @@ genInitialAsteroids g = evalRand initAsteroids g
 
 theShip = Ship {pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                       angPos = 0.0, radius = 0.016, thrusting = False,
-                      fire = NoEvent }
+                      fire = NoEvent, done = NoEvent }
 
 launchMissile :: Object -> Object
 launchMissile s = Missile { pos = (pos s), --ToDo caculate ship tip pos
@@ -172,11 +176,8 @@ movingAsteroid a = proc _ -> do
 movingMissile :: Object -> SFObject
 movingMissile m = proc _ -> do
     p <- ((pos m) ^+^) ^<< integral -< (vel m)
-    done <- edge <<< arr (> missileLife) <<< time -< ()
-    returnA -< updateMissile p done
-  where
-    updateMissile :: Position -> Event () -> Object
-    updateMissile p' done' = m { pos = p', done = done' }
+    done <- after missileLife () -< ()
+    returnA -< m { pos = p, done = done }
 
 movingShip :: Object -> SFObject
 movingShip a = proc ev -> do
@@ -220,15 +221,19 @@ movingObjects as ship = gameCore (listToIL ([shipSF] ++ aSFs))
     shipSF = movingShip ship
 
 killOrSpawn :: (Event KeyEvent, IL Object) -> Event (IL SFObject -> IL SFObject)
-killOrSpawn (_, objs)          =
-    let shipObj = filter isShip (elemsIL objs) !! 0
-        fireEvent = isEvent (fire shipObj)
-        addMissile objs = insertIL_ (movingMissile $ launchMissile shipObj) objs
-        missileDone obj = if isMissile obj then isEvent (done obj) else False
-        isMissileDone = null (filter missileDone (elemsIL objs))
-        doneMissels = filterIL (\(_, obj) -> missileDone obj) objs
-        removeDoneMissiles os = foldr deleteIL os (keysIL doneMissels)
-    in if fireEvent then Event addMissile else  if isMissileDone then Event removeDoneMissiles else NoEvent
+killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
+  where
+    shipObj :: Object
+    shipObj = filter isShip (elemsIL objs) !! 0
+
+    addMissile :: IL SFObject -> IL SFObject
+    addMissile objs = insertIL_ (movingMissile $ launchMissile shipObj) objs
+
+    fireEvent :: Event (IL SFObject -> IL SFObject)
+    fireEvent = (fire shipObj) `tag` addMissile
+
+    doneEvents :: [Event (IL SFObject -> IL SFObject)]
+    doneEvents = [ (done obj) `tag` (deleteIL k) | (k,obj) <- assocsIL objs ]
 
 gameCore :: IL SFObject -> SF (Event KeyEvent) (IL Object)
 gameCore objs = dpSwitchB objs (arr killOrSpawn >>> notYet) (\sfs f -> gameCore (f sfs))
@@ -323,9 +328,9 @@ renderMissile a = do
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ -> renderAsteroid obj
-    Ship _ _ _ _ _ _     -> renderShip obj
-    Missile _ _ _        -> renderMissile obj
+    Asteroid _ _ _ _ _ _ _ -> renderAsteroid obj
+    Ship _ _ _ _ _ _ _     -> renderShip obj
+    Missile _ _ _          -> renderMissile obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
