@@ -68,7 +68,7 @@ asterGen1Rad  = 0.064
 shipThrust    = 10.0
 shipDrag      = 3.0
 missileVel    = 0.5
-missileLife   = 1.0
+missileLife   = 0.1
 
 initAsteroid :: RandomGen g => Rand g Object
 initAsteroid = do
@@ -226,8 +226,9 @@ killOrSpawn (_, objs)          =
         addMissile objs = insertIL_ (movingMissile $ launchMissile shipObj) objs
         missileDone obj = if isMissile obj then isEvent (done obj) else False
         isMissileDone = null (filter missileDone (elemsIL objs))
-        -- removeDoneMissiles = filter (\obj -> missileDone obj) objs
-    in if fireEvent then Event addMissile else  if isMissileDone then NoEvent else NoEvent
+        doneMissels = filterIL (\(_, obj) -> missileDone obj) objs
+        removeDoneMissiles os = foldr deleteIL os (keysIL doneMissels)
+    in if fireEvent then Event addMissile else  if isMissileDone then Event removeDoneMissiles else NoEvent
 
 gameCore :: IL SFObject -> SF (Event KeyEvent) (IL Object)
 gameCore objs = dpSwitchB objs (arr killOrSpawn >>> notYet) (\sfs f -> gameCore (f sfs))

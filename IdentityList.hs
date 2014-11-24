@@ -47,7 +47,7 @@ type ILKey = Int
 --   key wrap around).
 -- * Keys are NOT reused
 data IL a = IL { ilNextKey :: ILKey, ilAssocs :: [(ILKey, a)] }
-
+   deriving (Show)
 
 ------------------------------------------------------------------------------
 -- Class instances
