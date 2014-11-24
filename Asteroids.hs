@@ -48,6 +48,8 @@ data Object = Asteroid { pos    :: Position,
                        }
     deriving (Show, Eq)
 
+type SFObject = SF (Event KeyEvent) Object
+
 isShip :: Object -> Bool
 isShip obj = case obj of
     Ship _ _ _ _ _ _ -> True
@@ -158,7 +160,7 @@ wrapObject radius = proc pos -> do
                         then wrap y else y)
     returnA -< pos'
 
-movingAsteroid :: Object -> SF (Event KeyEvent) Object
+movingAsteroid :: Object -> SFObject
 movingAsteroid a = proc _ -> do
     p <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     ap <- ((angPos a) +) ^<< integral -< (angVel a)
@@ -167,7 +169,7 @@ movingAsteroid a = proc _ -> do
     updateAsteroidPos :: Position -> AngPosition -> Object
     updateAsteroidPos p' ap' = a { pos = p', angPos = ap'}
 
-movingMissile :: Object -> SF (Event KeyEvent) Object
+movingMissile :: Object -> SFObject
 movingMissile m = proc _ -> do
     p <- ((pos m) ^+^) ^<< integral -< (vel m)
     done <- edge <<< arr (> missileLife) <<< time -< ()
@@ -176,7 +178,7 @@ movingMissile m = proc _ -> do
     updateMissile :: Position -> Event () -> Object
     updateMissile p' done' = m { pos = p', done = done' }
 
-movingShip :: Object -> SF (Event KeyEvent) Object
+movingShip :: Object -> SFObject
 movingShip a = proc ev -> do
     ap <- accumHoldBy accumAngPos 0.0 -< ev
     fire <- arr fireCannon -< ev
@@ -211,34 +213,34 @@ movingShip a = proc ev -> do
             else vector2 (-shipDrag * x / mag) (-shipDrag * y / mag)
 
 -- | Construct a list of moving game objects from a list of initial configurations.
-movingObjects :: [Object] -> Object -> SF (Event KeyEvent) [Object]
-movingObjects as ship = gameCore (aSFs ++ [shipSF])
+movingObjects :: [Object] -> Object -> SF (Event KeyEvent) (IL Object)
+movingObjects as ship = gameCore (listToIL ([shipSF] ++ aSFs))
   where
     aSFs = map movingAsteroid as
     shipSF = movingShip ship
 
-killOrSpawn :: (Event KeyEvent, [Object]) -> Event ([SF (Event KeyEvent) Object] -> [SF (Event KeyEvent) Object])
+killOrSpawn :: (Event KeyEvent, IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs)          =
-    let shipObj = filter isShip objs !! 0
+    let shipObj = filter isShip (elemsIL objs) !! 0
         fireEvent = isEvent (fire shipObj)
-        addMissile objs = objs ++ [movingMissile $ launchMissile shipObj]
-        missileDone obj = isEvent (done obj)
-        isMissileDone = null (filter missileDone objs)
+        addMissile objs = insertIL_ (movingMissile $ launchMissile shipObj) objs
+        missileDone obj = if isMissile obj then isEvent (done obj) else False
+        isMissileDone = null (filter missileDone (elemsIL objs))
         -- removeDoneMissiles = filter (\obj -> missileDone obj) objs
     in if fireEvent then Event addMissile else  if isMissileDone then NoEvent else NoEvent
 
-gameCore :: [SF (Event KeyEvent) Object] -> SF (Event KeyEvent) [Object]
+gameCore :: IL SFObject -> SF (Event KeyEvent) (IL Object)
 gameCore objs = dpSwitchB objs (arr killOrSpawn >>> notYet) (\sfs f -> gameCore (f sfs))
 
 ---------------------------------------------------
 
 -- | A Canvas action to render the entire scene.
-renderScene :: [Object] -> Canvas ()
+renderScene :: IL Object -> Canvas ()
 renderScene a = do
     scaleScene
     fillStyle "black"
     fillRect(0.0,0.0,1.0,1.0)
-    renderObjects a
+    renderObjects (elemsIL a)
     -- renderShip theShip
     return ()
 
