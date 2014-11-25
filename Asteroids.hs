@@ -215,12 +215,17 @@ movingShip a = proc ev -> do
 
 -- | Construct a list of moving game objects from a list of initial configurations.
 movingObjects :: [Object] -> Object -> SF (Event KeyEvent) (IL Object)
-movingObjects as ship = gameCore (listToIL ([shipSF] ++ aSFs))
+movingObjects as ship = playGame (listToIL ([shipSF] ++ aSFs))
   where
     aSFs = map movingAsteroid as
     shipSF = movingShip ship
 
-killOrSpawn :: (Event KeyEvent, IL Object) -> Event (IL SFObject -> IL SFObject)
+route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
+route (keyEv,objs) sfs = mapIL routeAux sfs
+  where
+    routeAux (k, obj) = (keyEv, obj)
+
+killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
   where
     shipObj :: Object
@@ -235,8 +240,41 @@ killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
     doneEvents = [ (done obj) `tag` (deleteIL k) | (k,obj) <- assocsIL objs ]
 
-gameCore :: IL SFObject -> SF (Event KeyEvent) (IL Object)
-gameCore objs = dpSwitchB objs (arr killOrSpawn >>> notYet) (\sfs f -> gameCore (f sfs))
+game :: IL SFObject -> SF (Event KeyEvent, IL Object) (IL Object)
+game objs = dpSwitch route objs (arr killOrSpawn >>> notYet) (\sfs f -> game (f sfs))
+
+playGame :: IL SFObject -> SF (Event KeyEvent) (IL Object)
+playGame objs = proc ev -> do
+  rec
+    objs <- game objs -< (ev, objs)
+  returnA -< objs
+
+---------------------------------------------------
+
+type Point = (Double, Double)
+type Polygon = [Point]
+type Edges = [(Point, Point)]
+
+polyEdges :: Polygon -> Edges
+polyEdges poly = zip poly (tail poly ++ [head poly])
+
+rotatePoly :: AngPosition -> Polygon -> Polygon
+rotatePoly ang poly = map rotatePoint poly
+  where
+    rotatePoint p = (x', y')
+      where
+        x = fst p
+        y = snd p
+        x' = x * cos ang - y * sin ang
+        y' = x * sin ang + y * cos ang
+
+translatePoly :: Point -> Polygon -> Polygon
+translatePoly dp poly = map translatePoint poly
+  where
+    translatePoint p = (fst p + fst dp, snd p + snd dp)
+
+transformPoly :: AngPosition -> Point -> Polygon -> Polygon
+transformPoly ang dp = (translatePoly dp).(rotatePoly ang)
 
 ---------------------------------------------------
 
@@ -258,8 +296,6 @@ scaleScene = do
         h = height context
     translate (0,h)
     scale (w, negate h)
-
-type Polygon = [(Double, Double)]
 
 renderPolygon :: Polygon -> Canvas ()
 renderPolygon p = do
