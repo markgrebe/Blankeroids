@@ -7,18 +7,16 @@ import qualified Graphics.Blank (Event)
 import FRP.Yampa
 import FRP.Yampa.Vector2
 import Data.Fixed(mod')
-import Data.Text(Text)
 
 import FRP.Yampa.Canvas
 
-import System.Random (newStdGen)
 import Control.Monad
 import Control.Monad.Random
 
 import IdentityList
 
-import Debug.Trace
-import Debug.Hood.Observe
+-- import Debug.Trace
+-- import Debug.Hood.Observe
 
 ---------------------------------------------------
 type Position = Vector2 Double
@@ -63,14 +61,23 @@ isMissile obj = case obj of
     Missile _ _ _  -> True
     _              -> False
 
+initAsterVel  :: Double
 initAsterVel  = 0.1
+initAsterNum  :: Int
 initAsterNum  = 4
+centerMinEdge :: Double
 centerMinEdge = 0.4
+centerMaxEdge :: Double
 centerMaxEdge = 0.6
+asterGen1Rad  :: Double
 asterGen1Rad  = 0.064
+shipThrust    :: Double
 shipThrust    = 10.0
+shipDrag      :: Double
 shipDrag      = 3.0
+missileVel    :: Double
 missileVel    = 0.5
+missileLife   :: Double
 missileLife   = 1.0
 
 initAsteroid :: RandomGen g => Rand g Object
@@ -110,6 +117,7 @@ initAsteroids = replicateM initAsterNum initAsteroid
 genInitialAsteroids :: RandomGen g => g -> [Object]
 genInitialAsteroids g = evalRand initAsteroids g
 
+theShip :: Object
 theShip = Ship {pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                       angPos = 0.0, radius = 0.016, thrusting = False,
                       fire = NoEvent, done = NoEvent }
@@ -135,15 +143,20 @@ animateAsteriods g = reactimateSFinContext handleKeyEvents renderScene (movingOb
 data KeyEvent = TurnRight | TurnLeft | Thruster | Fire
     deriving Show
 
+rightKey :: Int
 rightKey = 39
+leftKey  :: Int
 leftKey  = 37
+upKey    :: Int
 upKey    = 38
+downKey  :: Int
 downKey  = 40
+spaceKey :: Int
 spaceKey = 32
 
 handleKeyEvents :: Graphics.Blank.Event -> Canvas (Event KeyEvent)
-handleKeyEvents event = do
-    let keyEvent = case (eWhich event) of
+handleKeyEvents blankEvent = do
+    let keyEvent = case (eWhich blankEvent) of
                     Just a | a == rightKey -> Event TurnRight
                            | a == leftKey  -> Event TurnLeft
                            | a == upKey    -> Event Thruster
@@ -153,41 +166,38 @@ handleKeyEvents event = do
     return keyEvent
 
 wrapObject :: Double -> SF Position Position
-wrapObject radius = proc pos -> do
-    let minCoord = -radius
-        maxCoord = 1.0 + radius
-        wrap a = a `mod'` (1.0 + 2.0 * radius)
-        (x,y) = vector2XY pos
-        pos' = vector2 (if x <= minCoord || x >= maxCoord
-                        then wrap x else x)
-                       (if y <= minCoord || y >= maxCoord
-                        then wrap y else y)
-    returnA -< pos'
+wrapObject objRadius = proc objPos -> do
+    let minCoord = -objRadius
+        maxCoord = 1.0 + objRadius
+        wrap a = a `mod'` (1.0 + 2.0 * objRadius)
+        (x,y) = vector2XY objPos
+        objPos' = vector2 (if x <= minCoord || x >= maxCoord
+                           then wrap x else x)
+                          (if y <= minCoord || y >= maxCoord
+                           then wrap y else y)
+    returnA -< objPos'
 
 movingAsteroid :: Object -> SFObject
 movingAsteroid a = proc _ -> do
-    p <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
-    ap <- ((angPos a) +) ^<< integral -< (angVel a)
-    returnA -< updateAsteroidPos p ap
-  where
-    updateAsteroidPos :: Position -> AngPosition -> Object
-    updateAsteroidPos p' ap' = a { pos = p', angPos = ap'}
+    pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
+    angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
+    returnA -< a { pos = pos', angPos = angPos'}
 
 movingMissile :: Object -> SFObject
 movingMissile m = proc _ -> do
-    p <- ((pos m) ^+^) ^<< integral -< (vel m)
-    done <- after missileLife () -< ()
-    returnA -< m { pos = p, done = done }
+    pos' <- ((pos m) ^+^) ^<< integral -< (vel m)
+    done' <- after missileLife () -< ()
+    returnA -< m { pos = pos', done = done' }
 
 movingShip :: Object -> SFObject
 movingShip a = proc ev -> do
-    ap <- accumHoldBy accumAngPos 0.0 -< ev
-    fire <- arr fireCannon -< ev
+    angPos' <- accumHoldBy accumAngPos 0.0 -< ev
+    fire' <- arr fireCannon -< ev
     rec
-        a <- arr calcAccel -< (ev, ap, v)
-        v <- integral -< a
-    p <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< v
-    returnA -< updateShip p v ap ((vector2Rho a) > 0.1) fire
+        accel <- arr calcAccel -< (ev, angPos', vel')
+        vel' <- integral -< accel
+    pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< vel'
+    returnA -< updateShip pos' vel' angPos' ((vector2Rho accel) > 0.1) fire'
   where
     updateShip :: Position -> Velocity -> AngPosition -> Bool -> Event () -> Object
     updateShip p' v' ap' t' f' = a { pos = p', vel = v',
@@ -204,14 +214,14 @@ movingShip a = proc ev -> do
     fireCannon _            = NoEvent
 
     calcAccel :: (Event KeyEvent, AngPosition, Velocity) -> Acceleration
-    calcAccel (Event Thruster, angPos, _) =
-        vector2 (-shipThrust * sin angPos) (shipThrust * cos angPos)
-    calcAccel (_             , _     , vel) =
-        let mag = vector2Rho vel
-            (x,y) = vector2XY vel
+    calcAccel (Event Thruster, currAngPos, _) =
+        vector2 (-shipThrust * sin currAngPos) (shipThrust * cos currAngPos)
+    calcAccel (_             , _     , currVel) =
+        let mag = vector2Rho currVel
+            (xVel,yVel) = vector2XY currVel
         in if (mag < shipDrag)
-            then vector2 (-x) (-y)
-            else vector2 (-shipDrag * x / mag) (-shipDrag * y / mag)
+            then vector2 (-xVel) (-yVel)
+            else vector2 (-shipDrag * xVel / mag) (-shipDrag * yVel / mag)
 
 -- | Construct a list of moving game objects from a list of initial configurations.
 movingObjects :: [Object] -> Object -> SF (Event KeyEvent) (IL Object)
@@ -232,7 +242,7 @@ killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
     shipObj = filter isShip (elemsIL objs) !! 0
 
     addMissile :: IL SFObject -> IL SFObject
-    addMissile objs = insertIL_ (movingMissile $ launchMissile shipObj) objs
+    addMissile os = insertIL_ (movingMissile $ launchMissile shipObj) os
 
     fireEvent :: Event (IL SFObject -> IL SFObject)
     fireEvent = (fire shipObj) `tag` addMissile
