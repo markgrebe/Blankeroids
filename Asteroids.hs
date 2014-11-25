@@ -15,8 +15,8 @@ import Control.Monad.Random
 
 import IdentityList
 
--- import Debug.Trace
--- import Debug.Hood.Observe
+import Debug.Trace
+import Debug.Hood.Observe
 
 ---------------------------------------------------
 type Position = Vector2 Double
@@ -27,7 +27,8 @@ type AngVelocity = Double
 
 ---------------------------------------------------
 
-data Object = Asteroid { pos    :: Position,
+data Object = Asteroid { poly   :: Polygon,
+                         pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
                          angVel :: AngVelocity,
@@ -35,7 +36,8 @@ data Object = Asteroid { pos    :: Position,
                          gen    :: Int,
                          done   :: Event ()
                        }
-            | Ship     { pos    :: Position,
+            | Ship     { poly   :: Polygon,
+                         pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
                          radius :: Double,
@@ -43,7 +45,8 @@ data Object = Asteroid { pos    :: Position,
                          fire   :: Event (),
                          done   :: Event ()
                        }
-            | Missile  { pos    :: Position,
+            | Missile  { poly   :: Polygon,
+                         pos    :: Position,
                          vel    :: Velocity,
                          done   :: Event ()
                        }
@@ -53,13 +56,18 @@ type SFObject = SF (Event KeyEvent) Object
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ -> True
-    _                  -> False
+    Ship _ _ _ _ _ _ _ _ -> True
+    _                    -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
-    Missile _ _ _  -> True
-    _              -> False
+    Missile _ _ _ _ -> True
+    _               -> False
+
+isAsteroid :: Object -> Bool
+isAsteroid obj = case obj of
+    Asteroid _ _ _ _ _ _ _ _ -> True
+    _                        -> False
 
 initAsterVel  :: Double
 initAsterVel  = 0.1
@@ -104,7 +112,8 @@ initAsteroid = do
                         angVel = -0.5,
                         gen    = 0,
                         radius = asterGen1Rad,
-                        done   = NoEvent
+                        done   = NoEvent,
+                        poly   = asteroidGens !! 0
                     }
   where
     inCenter :: (Double, Double) -> Bool
@@ -118,12 +127,14 @@ genInitialAsteroids :: RandomGen g => g -> [Object]
 genInitialAsteroids g = evalRand initAsteroids g
 
 theShip :: Object
-theShip = Ship {pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
-                      angPos = 0.0, radius = 0.016, thrusting = False,
-                      fire = NoEvent, done = NoEvent }
+theShip = Ship {poly = shipPolygon,
+                pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
+                angPos = 0.0, radius = 0.016, thrusting = False,
+                fire = NoEvent, done = NoEvent }
 
 launchMissile :: Object -> Object
-launchMissile s = Missile { pos = (pos s), --ToDo caculate ship tip pos
+launchMissile s = Missile { poly = missilePolygon,
+                            pos = (pos s), --ToDo caculate ship tip pos
                             vel = vector2 (-missileVel * sin (angPos s))
                                           ( missileVel * cos (angPos s)),
                             done = NoEvent }
@@ -234,6 +245,9 @@ route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL routeAux sfs
   where
     routeAux (k, obj) = (keyEv, obj)
+    ship = head $ assocsIL (filterIL (\(_, obj) -> isShip obj) objs)
+    asteroids = filterIL (\(_, obj) -> isAsteroid obj) objs
+    missiles = filterIL (\(_, obj) -> isMissile obj) objs
 
 killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
@@ -263,13 +277,13 @@ playGame objs = proc ev -> do
 
 type Point = (Double, Double)
 type Polygon = [Point]
-type Edges = [(Point, Point)]
+type Edge = (Point, Point)
 
-polyEdges :: Polygon -> Edges
-polyEdges poly = zip poly (tail poly ++ [head poly])
+polyEdges :: Polygon -> [Edge]
+polyEdges polygon = zip polygon (tail polygon ++ [head polygon])
 
 rotatePoly :: AngPosition -> Polygon -> Polygon
-rotatePoly ang poly = map rotatePoint poly
+rotatePoly ang polygon = map rotatePoint polygon
   where
     rotatePoint p = (x', y')
       where
@@ -279,12 +293,33 @@ rotatePoly ang poly = map rotatePoint poly
         y' = x * sin ang + y * cos ang
 
 translatePoly :: Point -> Polygon -> Polygon
-translatePoly dp poly = map translatePoint poly
+translatePoly dp polygon = map translatePoint polygon
   where
     translatePoint p = (fst p + fst dp, snd p + snd dp)
 
 transformPoly :: AngPosition -> Point -> Polygon -> Polygon
 transformPoly ang dp = (translatePoly dp).(rotatePoly ang)
+
+pointInPolygon :: Point -> Polygon -> Bool
+pointInPolygon point polygon = foldr acumNode False edges
+  where
+    px = fst point
+    py = snd point
+    edges :: [Edge]
+    edges = polyEdges $ tail polygon
+    acumNode :: Edge -> Bool -> Bool
+    acumNode ed b = ((polY1 < py && polY2 >= py ||
+                      polY2 < py && polY1 >= py) &&
+                     (polX1 +
+                      (py - polY1)/(polY2 - polY1)*(polX2-polX1) < px)) /= b
+      where
+        polX1 = fst $ fst ed
+        polX2 = fst $ snd ed
+        polY1 = snd $ fst ed
+        polY2 = snd $ snd ed
+
+polygonInPolygon :: Polygon -> Polygon -> Bool
+polygonInPolygon poly1 poly2 = or $ map (flip pointInPolygon poly2) poly1
 
 ---------------------------------------------------
 
@@ -341,7 +376,7 @@ renderShip s = do
     save ()
     translate(vector2X (pos s), vector2Y (pos s))
     rotate (angPos s)
-    renderPolygon shipPolygon
+    renderPolygon (poly s)
     lineWidth 0.002
     strokeStyle "white"
     stroke()
@@ -356,17 +391,17 @@ renderAsteroid a = do
     save ()
     translate(vector2X (pos a), vector2Y (pos a))
     rotate (angPos a)
-    renderPolygon (asteroidGens !! (gen a))
+    renderPolygon (poly a)
     lineWidth 0.002
     strokeStyle "white"
     stroke()
     restore ()
 
 renderMissile :: Object -> Canvas ()
-renderMissile a = do
+renderMissile m = do
     save ()
-    translate(vector2X (pos a), vector2Y (pos a))
-    renderPolygon missilePolygon
+    translate(vector2X (pos m), vector2Y (pos m))
+    renderPolygon (poly m)
     lineWidth 0.002
     strokeStyle "white"
     stroke()
@@ -374,9 +409,9 @@ renderMissile a = do
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship _ _ _ _ _ _ _     -> renderShip obj
-    Missile _ _ _          -> renderMissile obj
+    Asteroid _ _ _ _ _ _ _ _ -> renderAsteroid obj
+    Ship _ _ _ _ _ _ _ _     -> renderShip obj
+    Missile _ _ _ _          -> renderMissile obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
