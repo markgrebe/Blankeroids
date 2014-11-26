@@ -35,7 +35,8 @@ data Object = Asteroid { poly   :: Polygon,
                          angVel :: AngVelocity,
                          radius :: Double,
                          gen    :: Int,
-                         done   :: Event ()
+                         done   :: Event (),
+                         spawn  :: Event [Object]
                        }
             | Ship     { poly   :: Polygon,
                          pos    :: Position,
@@ -44,12 +45,21 @@ data Object = Asteroid { poly   :: Polygon,
                          radius :: Double,
                          thrusting :: Bool,
                          fire   :: Event (),
-                         done   :: Event ()
+                         done   :: Event (),
+                         spawn  :: Event [Object]
                        }
             | Missile  { poly   :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
-                         done   :: Event ()
+                         done   :: Event (),
+                         spawn  :: Event [Object]
+                       }
+            | Dust     { poly   :: Polygon,
+                         pos    :: Position,
+                         vel    :: Velocity,
+                         life   :: Double,
+                         done   :: Event (),
+                         spawn  :: Event [Object]
                        }
     deriving (Show, Eq)
 
@@ -57,18 +67,18 @@ type SFObject = SF (Event KeyEvent) Object
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ _ -> True
-    _                    -> False
+    Ship _ _ _ _ _ _ _ _ _ -> True
+    _                      -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
-    Missile _ _ _ _ -> True
-    _               -> False
+    Missile _ _ _ _ _ -> True
+    _                 -> False
 
 isAsteroid :: Object -> Bool
 isAsteroid obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ -> True
-    _                        -> False
+    Asteroid _ _ _ _ _ _ _ _ _ -> True
+    _                          -> False
 
 initAsterVel  :: Double
 initAsterVel  = 0.1
@@ -120,6 +130,7 @@ initAsteroid = do
                         gen    = 0,
                         radius = asterGen1Rad,
                         done   = NoEvent,
+                        spawn  = Event [],
                         poly   = asterPolygons !! trace (show asterIndex) asterIndex
                     }
   where
@@ -137,14 +148,14 @@ theShip :: Object
 theShip = Ship {poly = shipPolygon,
                 pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                 angPos = 0.0, radius = 0.016, thrusting = False,
-                fire = NoEvent, done = NoEvent }
+                fire = NoEvent, done = NoEvent, spawn = NoEvent }
 
 launchMissile :: Object -> Object
 launchMissile s = Missile { poly = missilePolygon,
                             pos = (pos s), --ToDo caculate ship tip pos
                             vel = vector2 (-missileVel * sin (angPos s))
                                           ( missileVel * cos (angPos s)),
-                            done = NoEvent }
+                            done = NoEvent, spawn  = NoEvent }
 
 ---------------------------------------------------
 main :: IO ()
@@ -210,6 +221,12 @@ movingMissile m = proc ev -> do
     pos' <- ((pos m) ^+^) ^<< integral -< (vel m)
     done' <- after missileLife () -< ()
     returnA -< m { pos = pos', done = merge done' (destroyedToUnit ev)}
+
+movingDust :: Object -> SFObject
+movingDust d = proc _ -> do
+    pos' <- ((pos d) ^+^) ^<< integral -< (vel d)
+    done' <- after (life d) () -< ()
+    returnA -< d { pos = pos', done = done'}
 
 movingShip :: Object -> SFObject
 movingShip a = proc ev -> do
@@ -421,6 +438,10 @@ missilePolygon :: Polygon
 missilePolygon = [( -0.001,-0.001),(-0.001, 0.001),(0.001, 0.001),
                   ( 0.001,-0.001)]
 
+dustPolygon :: Polygon
+dustPolygon = [( -0.001,-0.001),(-0.001, 0.001),(0.001, 0.001),
+                  ( 0.001,-0.001)]
+
 renderShip :: Object -> Canvas ()
 renderShip s = do
     save ()
@@ -457,11 +478,22 @@ renderMissile m = do
     stroke()
     restore ()
 
+renderDust :: Object -> Canvas ()
+renderDust d = do
+    save ()
+    translate(vector2X (pos d), vector2Y (pos d))
+    renderPolygon (poly d)
+    lineWidth 0.001
+    strokeStyle "white"
+    stroke()
+    restore ()
+
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship _ _ _ _ _ _ _ _     -> renderShip obj
-    Missile _ _ _ _          -> renderMissile obj
+    Asteroid _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
+    Ship _ _ _ _ _ _ _ _ _     -> renderShip obj
+    Missile _ _ _ _ _          -> renderMissile obj
+    Dust _ _ _ _ _ _           -> renderDust obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
