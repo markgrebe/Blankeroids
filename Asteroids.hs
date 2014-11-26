@@ -200,10 +200,10 @@ movingAsteroid a = proc ev -> do
     returnA -< a { pos = pos', angPos = angPos', done = destroyedToUnit ev }
 
 movingMissile :: Object -> SFObject
-movingMissile m = proc _ -> do
+movingMissile m = proc ev -> do
     pos' <- ((pos m) ^+^) ^<< integral -< (vel m)
     done' <- after missileLife () -< ()
-    returnA -< m { pos = pos', done = done' }
+    returnA -< m { pos = pos', done = merge done' (destroyedToUnit ev)}
 
 movingShip :: Object -> SFObject
 movingShip a = proc ev -> do
@@ -357,7 +357,6 @@ renderScene a = do
     fillStyle "black"
     fillRect(0.0,0.0,1.0,1.0)
     renderObjects (elemsIL a)
-    -- renderShip theShip
     return ()
 
 -- | We scale such that (0,0) is the bottom-left of the canvas and (1,1) is the top-right.
