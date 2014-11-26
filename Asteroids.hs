@@ -36,7 +36,7 @@ data Object = Asteroid { poly   :: Polygon,
                          radius :: Double,
                          gen    :: Int,
                          done   :: Event (),
-                         spawn  :: Event [Object]
+                         spawn  :: Event [SFObject]
                        }
             | Ship     { poly   :: Polygon,
                          pos    :: Position,
@@ -46,22 +46,21 @@ data Object = Asteroid { poly   :: Polygon,
                          thrusting :: Bool,
                          fire   :: Event (),
                          done   :: Event (),
-                         spawn  :: Event [Object]
+                         spawn  :: Event [SFObject]
                        }
             | Missile  { poly   :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
                          done   :: Event (),
-                         spawn  :: Event [Object]
+                         spawn  :: Event [SFObject]
                        }
             | Dust     { poly   :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
                          life   :: Double,
                          done   :: Event (),
-                         spawn  :: Event [Object]
+                         spawn  :: Event [SFObject]
                        }
-    deriving (Show, Eq)
 
 type SFObject = SF (Event KeyEvent) Object
 
@@ -131,12 +130,38 @@ initAsteroid = do
                         radius = asterGen1Rad,
                         done   = NoEvent,
                         spawn  = Event [],
-                        poly   = asterPolygons !! trace (show asterIndex) asterIndex
+                        poly   = asterPolygons !! asterIndex
                     }
   where
     inCenter :: (Double, Double) -> Bool
     inCenter (x, y) = x >= centerMinEdge && x <= centerMaxEdge &&
                       y >= centerMinEdge && y <= centerMaxEdge
+
+subAsteroids :: Position -> Velocity -> AngPosition -> AngVelocity -> Int -> [SFObject]
+subAsteroids p v angP angV currgen = movingAsteroid aster1 : movingAsteroid aster2 : []
+  where
+    scaleFactor :: Double
+    scaleFactor = 1.0 / fromIntegral ((currgen + 1) * 2)
+    aster1 = Asteroid {   pos    = p,
+                          vel    = vector2 (-1 * vector2X v) (vector2Y v),
+                          angPos = angP,
+                          angVel = angV,
+                          gen    = currgen + 1,
+                          radius = scaleFactor * asterGen1Rad,
+                          done   = NoEvent,
+                          spawn  = Event [],
+                          poly   = scalePoly scaleFactor (asterPolygons !! 1)
+                      }
+    aster2 = Asteroid {   pos    = p,
+                          vel    = vector2 (vector2X v) (-1 * vector2Y v),
+                          angPos = angP,
+                          angVel = -angV,
+                          gen    = currgen + 1,
+                          radius = scaleFactor * asterGen1Rad,
+                          done   = NoEvent,
+                          spawn  = Event [],
+                          poly   = scalePoly scaleFactor (asterPolygons !! 1)
+                      }
 
 initAsteroids :: RandomGen g => Rand g [Object]
 initAsteroids = replicateM initAsterNum initAsteroid
@@ -214,7 +239,12 @@ movingAsteroid :: Object -> SFObject
 movingAsteroid a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
-    returnA -< a { pos = pos', angPos = angPos', done = destroyedToUnit ev }
+    returnA -< a { pos = pos', angPos = angPos',
+                   done = destroyedToUnit ev,
+                   spawn = destroyedToUnit ev `tag`
+                           subAsteroids pos' (vel a) angPos' (angVel a) (gen a) }
+--  where
+--    spawnedDust = movingDust
 
 movingMissile :: Object -> SFObject
 movingMissile m = proc ev -> do
@@ -293,7 +323,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
                        else (keyEv, sfObj)
 
 killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
-killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
+killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents ++ spawnEvents)
   where
     shipObj :: Object
     shipObj = filter isShip (elemsIL objs) !! 0
@@ -307,18 +337,18 @@ killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
     doneEvents = [ (done obj) `tag` (deleteIL k) | (k,obj) <- assocsIL objs ]
 
+    spawnEvents :: [Event (IL SFObject -> IL SFObject)]
+    spawnEvents = [ fmap (foldl (.) id . map insertIL_) (spawn obj) | (_,obj) <- assocsIL objs ]
+
 game :: IL SFObject -> SF (Event KeyEvent, IL Object) (IL Object)
 game objs = dpSwitch route objs (arr killOrSpawn >>> notYet) (\sfs f -> game (f sfs))
 
 playGame :: IL SFObject -> SF (Event KeyEvent) (IL Object)
 playGame sfobjs = proc ev -> do
   rec
-    oobjs <- game sfobjs -< (ev, oobjsp)
-    oobjsp <- iPre emptyIL -< oobjs
-  returnA -< oobjs
-
---        oos  <- game' objs0  -< (gi, oos {- oosp -})
---        {- oosp <- iPre emptyIL -< oos -}
+    objs <- game sfobjs -< (ev, objsp)
+    objsp <- iPre emptyIL -< objs
+  returnA -< objs
 
 ---------------------------------------------------
 
