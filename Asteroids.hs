@@ -61,7 +61,6 @@ isShip obj = case obj of
     _                    -> False
 
 isMissile :: Object -> Bool
-isMissile obj | trace "isMissile" False = undefined
 isMissile obj = case obj of
     Missile _ _ _ _ -> True
     _               -> False
@@ -251,26 +250,21 @@ route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
     -- ship = head $ assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
-    -- asteroids os | trace "Asteroids" False = undefined
     asteroids os = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) os
-    -- missiles os | trace "Missiles" False = undefined
     missiles os = assocsIL $ filterIL (\(_, obj) -> isMissile obj) os
-    -- missiles os = filter (\(_, obj) -> isMissile obj) (take 5 $ assocsIL os)
     mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [ILKey]
-    -- mAsHits _ _ | trace "MAsHits" False = undefined
     mAsHits _        []             = []
     mAsHits (mk, mo) ((ak,ao):rest) =
-      if pointInPolygon (pos2Point (pos mo)) (poly ao)
+      if pointInPolygon (pos2Point (pos mo)) polygon'
       then mk : ak : (mAsHits (mk, mo) rest)
       else mAsHits (mk, mo) rest
+        where
+          polygon' = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
     msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
-    -- msAsHits _ _ | trace "MsAsHits" False = undefined
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
     hits = nub $ msAsHits (missiles objs) (asteroids objs)
     route' :: (ILKey, sf) -> (Event KeyEvent, sf)
---    route' (k, sfObj) = (keyEv, sfObj)
---    route' (k,sfObj) = if null hits then (keyEv, sfObj) else (Event Thruster, sfObj)
     route' (k,sfObj) = if k `elem` hits
                        then (Event Destroyed, sfObj)
                        else (keyEv, sfObj)
