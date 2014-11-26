@@ -96,8 +96,14 @@ initAsteroid = do
     ys <- getRandomRs (0.0, 1.0)
     -- Find an x,y pair that is not in center of the screen
     let (x,y) = head . dropWhile inCenter . zip xs $ ys
-    -- Get a random angle
+    -- Get a random angle for velocity
     thetaRand <- getRandomR (0.0, pi / 2)
+    -- Get a random angle for position
+    angRand <- getRandomR (0.0, 2 * pi)
+    -- Get a random angular velocity
+    angVelRand <- getRandomR (-0.5,0.5)
+    -- Get a random asteroid
+    asterIndex <- getRandomR (0,length(asterPolygons) - 1)
     -- Based on quadrant of the screen of x,y, set velocity in the general
     -- direction of the center
     let thetav = if x <= 0.5 && y <= 0.5 then thetaRand
@@ -109,12 +115,12 @@ initAsteroid = do
     let yv = initAsterVel * sin thetav
     return Asteroid {   pos    = vector2 x y,
                         vel    = vector2 xv yv,
-                        angPos = 0.0,
-                        angVel = -0.5,
+                        angPos = angRand,
+                        angVel = angVelRand,
                         gen    = 0,
                         radius = asterGen1Rad,
                         done   = NoEvent,
-                        poly   = asteroidGens !! 0
+                        poly   = asterPolygons !! trace (show asterIndex) asterIndex
                     }
   where
     inCenter :: (Double, Double) -> Bool
@@ -249,7 +255,7 @@ movingObjects as ship = playGame (listToIL ([shipSF] ++ aSFs))
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
-    -- ship = head $ assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    ship = head $ assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
     asteroids os = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) os
     missiles os = assocsIL $ filterIL (\(_, obj) -> isMissile obj) os
     mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [ILKey]
@@ -327,6 +333,11 @@ translatePoly dp polygon = map translatePoint polygon
 transformPoly :: AngPosition -> Point -> Polygon -> Polygon
 transformPoly ang dp = (translatePoly dp).(rotatePoly ang)
 
+scalePoly :: Double -> Polygon -> Polygon
+scalePoly scaleFactor polygon = map scalePoint polygon
+ where
+    scalePoint p = (scaleFactor * fst p, scaleFactor * snd p)
+
 pointInPolygon :: Point -> Polygon -> Bool
 pointInPolygon point polygon = foldr acumNode False edges
   where
@@ -375,15 +386,28 @@ renderPolygon p = do
     mapM_ lineTo (tail p)
     closePath ()
 
-asteroidGen1 :: Polygon
-asteroidGen1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
+asteroid1 :: Polygon
+asteroid1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
                 ( 0.016,-0.060),( 0.062,-0.030),( 0.064,-0.014),
                 ( 0.016, 0.000),( 0.058, 0.030),( 0.032, 0.060),
                 ( 0.014, 0.046),(-0.032, 0.060),(-0.064, 0.016),
                 (-0.064,-0.030)]
 
-asteroidGens :: [Polygon]
-asteroidGens = [asteroidGen1]
+asteroid2 :: Polygon
+asteroid2 = [(-0.054,-0.026),(-0.054, 0.033),(-0.026, 0.062),
+             ( 0.005, 0.035),( 0.033, 0.062),( 0.060, 0.035),
+             ( 0.047, 0.005),( 0.060,-0.026),( 0.018,-0.056),
+             (-0.026,-0.056),(-0.054,-0.026)]
+
+asteroid3 :: Polygon
+asteroid3 = [(-0.056, 0.029),(-0.029, 0.056),( 0.002, 0.044),
+             ( 0.030, 0.057),( 0.059, 0.029),( 0.032, 0.014),
+             ( 0.057,-0.015),( 0.030,-0.060),(-0.014,-0.045),
+             (-0.027,-0.059),(-0.056,-0.030),(-0.044,-0.002),
+             (-0.056, 0.029)]
+
+asterPolygons :: [Polygon]
+asterPolygons = [asteroid1,asteroid2,asteroid3]
 
 shipPolygon :: Polygon
 shipPolygon = [( -0.006,-0.016),(0.000,0.016),(0.006,-0.016),
