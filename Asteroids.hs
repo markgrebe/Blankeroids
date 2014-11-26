@@ -7,6 +7,7 @@ import qualified Graphics.Blank (Event)
 import FRP.Yampa
 import FRP.Yampa.Vector2
 import Data.Fixed(mod')
+import Data.List(nub)
 
 import FRP.Yampa.Canvas
 
@@ -60,6 +61,7 @@ isShip obj = case obj of
     _                    -> False
 
 isMissile :: Object -> Bool
+isMissile obj | trace "isMissile" False = undefined
 isMissile obj = case obj of
     Missile _ _ _ _ -> True
     _               -> False
@@ -151,8 +153,12 @@ animateAsteriods g = reactimateSFinContext handleKeyEvents renderScene (movingOb
 
 ---------------------------------------------------
 
-data KeyEvent = TurnRight | TurnLeft | Thruster | Fire
-    deriving Show
+data KeyEvent = TurnRight | TurnLeft | Thruster | Fire | Destroyed
+    deriving (Show, Eq)
+
+destroyedToUnit :: Event KeyEvent -> Event ()
+destroyedToUnit (Event Destroyed) = Event ()
+destroyedToUnit _                 = NoEvent
 
 rightKey :: Int
 rightKey = 39
@@ -189,10 +195,10 @@ wrapObject objRadius = proc objPos -> do
     returnA -< objPos'
 
 movingAsteroid :: Object -> SFObject
-movingAsteroid a = proc _ -> do
+movingAsteroid a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
-    returnA -< a { pos = pos', angPos = angPos'}
+    returnA -< a { pos = pos', angPos = angPos', done = destroyedToUnit ev }
 
 movingMissile :: Object -> SFObject
 movingMissile m = proc _ -> do
@@ -242,12 +248,32 @@ movingObjects as ship = playGame (listToIL ([shipSF] ++ aSFs))
     shipSF = movingShip ship
 
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
-route (keyEv,objs) sfs = mapIL routeAux sfs
+route (keyEv,objs) sfs = mapIL route' sfs
   where
-    routeAux (k, obj) = (keyEv, obj)
-    ship = head $ assocsIL (filterIL (\(_, obj) -> isShip obj) objs)
-    asteroids = filterIL (\(_, obj) -> isAsteroid obj) objs
-    missiles = filterIL (\(_, obj) -> isMissile obj) objs
+    -- ship = head $ assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    -- asteroids os | trace "Asteroids" False = undefined
+    asteroids os = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) os
+    -- missiles os | trace "Missiles" False = undefined
+    missiles os = assocsIL $ filterIL (\(_, obj) -> isMissile obj) os
+    -- missiles os = filter (\(_, obj) -> isMissile obj) (take 5 $ assocsIL os)
+    mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [ILKey]
+    -- mAsHits _ _ | trace "MAsHits" False = undefined
+    mAsHits _        []             = []
+    mAsHits (mk, mo) ((ak,ao):rest) =
+      if pointInPolygon (pos2Point (pos mo)) (poly ao)
+      then mk : ak : (mAsHits (mk, mo) rest)
+      else mAsHits (mk, mo) rest
+    msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
+    -- msAsHits _ _ | trace "MsAsHits" False = undefined
+    msAsHits []     _  = []
+    msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
+    hits = nub $ msAsHits (missiles objs) (asteroids objs)
+    route' :: (ILKey, sf) -> (Event KeyEvent, sf)
+--    route' (k, sfObj) = (keyEv, sfObj)
+--    route' (k,sfObj) = if null hits then (keyEv, sfObj) else (Event Thruster, sfObj)
+    route' (k,sfObj) = if k `elem` hits
+                       then (Event Destroyed, sfObj)
+                       else (keyEv, sfObj)
 
 killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents)
@@ -268,16 +294,23 @@ game :: IL SFObject -> SF (Event KeyEvent, IL Object) (IL Object)
 game objs = dpSwitch route objs (arr killOrSpawn >>> notYet) (\sfs f -> game (f sfs))
 
 playGame :: IL SFObject -> SF (Event KeyEvent) (IL Object)
-playGame objs = proc ev -> do
+playGame sfobjs = proc ev -> do
   rec
-    objs <- game objs -< (ev, objs)
-  returnA -< objs
+    oobjs <- game sfobjs -< (ev, oobjsp)
+    oobjsp <- iPre emptyIL -< oobjs
+  returnA -< oobjs
+
+--        oos  <- game' objs0  -< (gi, oos {- oosp -})
+--        {- oosp <- iPre emptyIL -< oos -}
 
 ---------------------------------------------------
 
 type Point = (Double, Double)
 type Polygon = [Point]
 type Edge = (Point, Point)
+
+pos2Point :: Position -> Point
+pos2Point p = (vector2X p, vector2Y p)
 
 polyEdges :: Polygon -> [Edge]
 polyEdges polygon = zip polygon (tail polygon ++ [head polygon])
