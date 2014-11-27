@@ -241,8 +241,15 @@ movingAsteroid a = proc ev -> do
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
     returnA -< a { pos = pos', angPos = angPos',
                    done = destroyedToUnit ev,
-                   spawn = destroyedToUnit ev `tag`
-                           subAsteroids pos' (vel a) angPos' (angVel a) (gen a) }
+                   spawn = destroyedToUnit ev `tag` newObjects a pos' angPos' }
+  where
+    newObjects a' p angP = newAsteroids a' p angP ++ newDust p
+    newAsteroids a' p angP = subAsteroids p (vel a') angP (angVel a') (gen a')
+    newDust p = map movingDust
+              [ Dust { poly = dustPolygon, pos = p,
+                       vel = vector2 (0.05 * sin angle) (0.05 * cos angle),
+                       life = 0.5, done = NoEvent, spawn = NoEvent
+                     } | angle <- [0, 2*pi/32 .. 2*pi]  ]
 --  where
 --    spawnedDust = movingDust
 
