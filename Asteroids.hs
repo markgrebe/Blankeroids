@@ -249,13 +249,13 @@ movingAsteroid g a = proc ev -> do
                    spawn = destroyedToUnit ev `tag` newObjects a pos' angPos' }
   where
     (g', g'') = split g
-    newObjects a' p angP = newDebris p ++ if gen a' <= 1
-                                          then newAsteroids a' p angP
-                                          else []
+    newObjects a' p angP = evalRand (newDebris p) g'' ++
+                             if gen a' <= 1
+                             then newAsteroids a' p angP
+                             else []
     newAsteroids a' p angP = subAsteroids g' p (vel a') angP (angVel a') (gen a')
-    newDebris p = evalRand (makeDebris p) g''
-    makeDebris :: RandomGen g => Position -> Rand g [SFObject]
-    makeDebris p = do
+    newDebris :: RandomGen g => Position -> Rand g [SFObject]
+    newDebris p = do
         debris <- replicateM 16 (oneDebris p)
         return debris
     oneDebris :: RandomGen g => Position -> Rand g SFObject
