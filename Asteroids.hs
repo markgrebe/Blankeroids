@@ -54,7 +54,7 @@ data Object = Asteroid { poly   :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
-            | Dust     { poly   :: Polygon,
+            | Debris     { poly   :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
                          life   :: Double,
@@ -137,8 +137,8 @@ initAsteroid = do
     inCenter (x, y) = x >= centerMinEdge && x <= centerMaxEdge &&
                       y >= centerMinEdge && y <= centerMaxEdge
 
-subAsteroids :: Position -> Velocity -> AngPosition -> AngVelocity -> Int -> [SFObject]
-subAsteroids p v angP angV currgen = movingAsteroid aster1 : movingAsteroid aster2 : []
+subAsteroids :: RandomGen g => g -> Position -> Velocity -> AngPosition -> AngVelocity -> Int -> [SFObject]
+subAsteroids g p v angP angV currgen = movingAsteroid g aster1 : movingAsteroid g aster2 : []
   where
     scaleFactor :: Double
     scaleFactor = 1.0 / fromIntegral ((currgen + 1) * 2)
@@ -190,7 +190,12 @@ main = do
 
 -- | Display an animation of multiple asteroids.
 animateAsteriods :: RandomGen g => g -> DeviceContext -> IO ()
-animateAsteriods g = reactimateSFinContext handleKeyEvents renderScene (movingObjects (genInitialAsteroids g) theShip)
+animateAsteriods g = reactimateSFinContext handleKeyEvents
+                                           renderScene
+                                           (movingObjects
+                                              g' (genInitialAsteroids g'') theShip)
+  where
+    (g', g'') = split g
 
 ---------------------------------------------------
 
@@ -235,23 +240,33 @@ wrapObject objRadius = proc objPos -> do
                            then wrap y else y)
     returnA -< objPos'
 
-movingAsteroid :: Object -> SFObject
-movingAsteroid a = proc ev -> do
+movingAsteroid :: RandomGen g => g -> Object -> SFObject
+movingAsteroid g a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
     returnA -< a { pos = pos', angPos = angPos',
                    done = destroyedToUnit ev,
                    spawn = destroyedToUnit ev `tag` newObjects a pos' angPos' }
   where
-    newObjects a' p angP = newAsteroids a' p angP ++ newDust p
-    newAsteroids a' p angP = subAsteroids p (vel a') angP (angVel a') (gen a')
-    newDust p = map movingDust
-              [ Dust { poly = dustPolygon, pos = p,
-                       vel = vector2 (0.05 * sin angle) (0.05 * cos angle),
-                       life = 0.5, done = NoEvent, spawn = NoEvent
-                     } | angle <- [0, 2*pi/32 .. 2*pi]  ]
---  where
---    spawnedDust = movingDust
+    (g', g'') = split g
+    newObjects a' p angP = newDebris p ++ if gen a' <= 1
+                                          then newAsteroids a' p angP
+                                          else []
+    newAsteroids a' p angP = subAsteroids g' p (vel a') angP (angVel a') (gen a')
+    newDebris p = evalRand (makeDebris p) g''
+    makeDebris :: RandomGen g => Position -> Rand g [SFObject]
+    makeDebris p = do
+        debris <- replicateM 16 (oneDebris p)
+        return debris
+    oneDebris :: RandomGen g => Position -> Rand g SFObject
+    oneDebris p = do
+        life'  <- getRandomR(0.1,0.8)
+        vel'   <- getRandomR(0.05,0.15)
+        angle' <- getRandomR(0.0, 2*pi)
+        return (movingDebris
+                Debris { poly = dustPolygon, pos = p,
+                         vel = vector2 (vel' * sin angle') (vel' * cos angle'),
+                         life = life', done = NoEvent, spawn = NoEvent } )
 
 movingMissile :: Object -> SFObject
 movingMissile m = proc ev -> do
@@ -259,14 +274,14 @@ movingMissile m = proc ev -> do
     done' <- after missileLife () -< ()
     returnA -< m { pos = pos', done = merge done' (destroyedToUnit ev)}
 
-movingDust :: Object -> SFObject
-movingDust d = proc _ -> do
+movingDebris :: Object -> SFObject
+movingDebris d = proc _ -> do
     pos' <- ((pos d) ^+^) ^<< integral -< (vel d)
     done' <- after (life d) () -< ()
     returnA -< d { pos = pos', done = done'}
 
-movingShip :: Object -> SFObject
-movingShip a = proc ev -> do
+movingShip :: RandomGen g => g -> Object -> SFObject
+movingShip g a = proc ev -> do
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
     fire' <- arr fireCannon -< ev
     rec
@@ -300,11 +315,12 @@ movingShip a = proc ev -> do
             else vector2 (-shipDrag * xVel / mag) (-shipDrag * yVel / mag)
 
 -- | Construct a list of moving game objects from a list of initial configurations.
-movingObjects :: [Object] -> Object -> SF (Event KeyEvent) (IL Object)
-movingObjects as ship = playGame (listToIL ([shipSF] ++ aSFs))
+movingObjects :: RandomGen g => g -> [Object] -> Object -> SF (Event KeyEvent) (IL Object)
+movingObjects g as ship = playGame (listToIL ([shipSF] ++ aSFs))
   where
-    aSFs = map movingAsteroid as
-    shipSF = movingShip ship
+    (g', g'') = split g
+    aSFs = map (movingAsteroid g') as
+    shipSF = movingShip g'' ship
 
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
@@ -515,8 +531,8 @@ renderMissile m = do
     stroke()
     restore ()
 
-renderDust :: Object -> Canvas ()
-renderDust d = do
+renderDebris :: Object -> Canvas ()
+renderDebris d = do
     save ()
     translate(vector2X (pos d), vector2Y (pos d))
     renderPolygon (poly d)
@@ -530,7 +546,7 @@ renderObject obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
     Ship _ _ _ _ _ _ _ _ _     -> renderShip obj
     Missile _ _ _ _ _          -> renderMissile obj
-    Dust _ _ _ _ _ _           -> renderDust obj
+    Debris _ _ _ _ _ _         -> renderDebris obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
