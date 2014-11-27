@@ -7,7 +7,7 @@ import qualified Graphics.Blank (Event)
 import FRP.Yampa
 import FRP.Yampa.Vector2
 import Data.Fixed(mod')
-import Data.List(nub)
+import Data.List(nub, mapAccumL)
 
 import FRP.Yampa.Canvas
 
@@ -97,6 +97,11 @@ missileVel    :: Double
 missileVel    = 0.5
 missileLife   :: Double
 missileLife   = 1.0
+
+randGenList :: RandomGen g => g -> [g]
+randGenList g = g' : randGenList g''
+  where
+    (g', g'') = split g
 
 initAsteroid :: RandomGen g => Rand g Object
 initAsteroid = do
@@ -242,6 +247,13 @@ wrapObject objRadius = proc objPos -> do
                            then wrap y else y)
     returnA -< objPos'
 
+movingRandomAsteroids :: RandomGen g => g -> [Object] -> [SFObject]
+movingRandomAsteroids g as = map randomAster gensAsters
+  where
+    gens = take (length as) (randGenList g)
+    gensAsters = zip gens as
+    randomAster (g', a) = movingAsteroid g' a
+
 movingAsteroid :: RandomGen g => g -> Object -> SFObject
 movingAsteroid g a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
@@ -250,11 +262,11 @@ movingAsteroid g a = proc ev -> do
                    done = destroyedToUnit ev,
                    spawn = destroyedToUnit ev `tag` newObjects a pos' }
   where
-    (g', g'') = split g
-    (g''', _) = split g''
-    newObjects a' p = evalRand (newDebris p) g' ++
+    (g1, g2) = split g
+    (g3, g4) = split g1
+    newObjects a' p = evalRand (newDebris p) g2 ++
                      if gen a' <= 1
-                     then map (movingAsteroid g'') (evalRand (newAsteroids p (gen a')) g''')
+                     then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a')) g4)
                      else []
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
     newDebris p = do
@@ -321,7 +333,7 @@ movingObjects :: RandomGen g => g -> [Object] -> Object -> SF (Event KeyEvent) (
 movingObjects g as ship = playGame (listToIL ([shipSF] ++ aSFs))
   where
     (g', g'') = split g
-    aSFs = map (movingAsteroid g') as
+    aSFs = movingRandomAsteroids g' as
     shipSF = movingShip g'' ship
 
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
