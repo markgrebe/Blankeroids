@@ -137,31 +137,33 @@ initAsteroid = do
     inCenter (x, y) = x >= centerMinEdge && x <= centerMaxEdge &&
                       y >= centerMinEdge && y <= centerMaxEdge
 
-subAsteroids :: RandomGen g => g -> Position -> Velocity -> AngPosition -> AngVelocity -> Int -> [SFObject]
-subAsteroids g p v angP angV currgen = movingAsteroid g aster1 : movingAsteroid g aster2 : []
+newAsteroids :: RandomGen g => Position -> Int -> Rand g [Object]
+newAsteroids p currgen = do
+    asters <- replicateM 2 oneAsteroid
+    return asters
   where
-    scaleFactor :: Double
-    scaleFactor = 1.0 / fromIntegral ((currgen + 1) * 2)
-    aster1 = Asteroid {   pos    = p,
-                          vel    = vector2 (-1 * vector2X v) (vector2Y v),
-                          angPos = angP,
-                          angVel = angV,
-                          gen    = currgen + 1,
-                          radius = scaleFactor * asterGen1Rad,
-                          done   = NoEvent,
-                          spawn  = Event [],
-                          poly   = scalePoly scaleFactor (asterPolygons !! 1)
-                      }
-    aster2 = Asteroid {   pos    = p,
-                          vel    = vector2 (vector2X v) (-1 * vector2Y v),
-                          angPos = angP,
-                          angVel = -angV,
-                          gen    = currgen + 1,
-                          radius = scaleFactor * asterGen1Rad,
-                          done   = NoEvent,
-                          spawn  = Event [],
-                          poly   = scalePoly scaleFactor (asterPolygons !! 1)
-                      }
+    sizeScale :: Double
+    sizeScale = 1.0 / fromIntegral ((currgen + 1) * 2)
+    velScale :: Double
+    velScale = if currgen == 0 then 1.5 else 2.0
+    oneAsteroid :: RandomGen g => Rand g Object
+    oneAsteroid = do
+        -- Get a random angle for velocity
+        thetaRand <- getRandomR (0.0, 2 * pi)
+        -- Get a random angle for position
+        angRand <- getRandomR (0.0, 2 * pi)
+        -- Get a random angular velocity
+        angVelRand <- getRandomR (-0.5,0.5)
+        -- Get a random asteroid
+        asterIndex <- getRandomR (0,length(asterPolygons) - 1)
+        let xv = velScale * initAsterVel * cos thetaRand
+        let yv = velScale * initAsterVel * sin thetaRand
+        return
+            Asteroid { pos = p, vel = vector2 xv yv,
+                       angPos = angRand, angVel = angVelRand,
+                       gen = currgen + 1, radius = sizeScale * asterGen1Rad,
+                       done = NoEvent, spawn = Event [],
+                       poly = scalePoly sizeScale (asterPolygons !! asterIndex)}
 
 initAsteroids :: RandomGen g => Rand g [Object]
 initAsteroids = replicateM initAsterNum initAsteroid
@@ -246,14 +248,14 @@ movingAsteroid g a = proc ev -> do
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
     returnA -< a { pos = pos', angPos = angPos',
                    done = destroyedToUnit ev,
-                   spawn = destroyedToUnit ev `tag` newObjects a pos' angPos' }
+                   spawn = destroyedToUnit ev `tag` newObjects a pos' }
   where
     (g', g'') = split g
-    newObjects a' p angP = evalRand (newDebris p) g'' ++
-                             if gen a' <= 1
-                             then newAsteroids a' p angP
-                             else []
-    newAsteroids a' p angP = subAsteroids g' p (vel a') angP (angVel a') (gen a')
+    (g''', _) = split g''
+    newObjects a' p = evalRand (newDebris p) g' ++
+                     if gen a' <= 1
+                     then map (movingAsteroid g'') (evalRand (newAsteroids p (gen a')) g''')
+                     else []
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
     newDebris p = do
         debris <- replicateM 16 (oneDebris p)
