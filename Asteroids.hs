@@ -53,7 +53,7 @@ data Object = Asteroid { poly   :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
-            | Debris     { poly   :: Polygon,
+            | Debris   { poly   :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
                          life   :: Double,
@@ -62,7 +62,6 @@ data Object = Asteroid { poly   :: Polygon,
                        }
             | Game     { scoore :: Integer,
                          lives  :: Integer,
-                         life   :: Double,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -262,14 +261,18 @@ movingAsteroid g a = proc ev -> do
   where
     (g1, g2) = split g
     (g3, g4) = split g1
+
+    newObjects :: Object -> Position -> [SFObject]
     newObjects a' p = evalRand (newDebris p) g2 ++
                      if gen a' <= 1
                      then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a')) g4)
                      else []
+
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
     newDebris p = do
         debris <- replicateM 16 (oneDebris p)
         return debris
+
     oneDebris :: RandomGen g => Position -> Rand g SFObject
     oneDebris p = do
         life'  <- getRandomR(0.1,0.8)
@@ -303,7 +306,8 @@ movingShip g s = proc ev -> do
     returnA -< s { pos = pos', vel = vel', angPos = angPos',
                    thrusting = ((vector2Rho accel) > 0.1),
                    done = destroyedToUnit ev,
-                   spawn = fire `tag` (addMissile pos' angPos') }
+                   spawn = (mergeBy (++)) (fire `tag` (addMissile pos' angPos'))
+                           (destroyedToUnit ev `tag` (evalRand (newDebris pos') g)) }
   where
     addMissile :: Position -> AngPosition -> [SFObject]
     addMissile p' ap' = [movingMissile $ launchMissile p' ap']
@@ -333,6 +337,21 @@ movingShip g s = proc ev -> do
         in if (mag < shipDrag)
             then vector2 (-xVel) (-yVel)
             else vector2 (-shipDrag * xVel / mag) (-shipDrag * yVel / mag)
+
+    newDebris :: RandomGen g => Position -> Rand g [SFObject]
+    newDebris p = do
+        debris <- mapM (oneDebris p) [0..(length shipDebrisPolygons - 1)]
+        return debris
+
+    oneDebris :: RandomGen g => Position -> Int -> Rand g SFObject
+    oneDebris p i = do
+        life'  <- getRandomR(0.8,1.6)
+        vel'   <- getRandomR(0.03,0.08)
+        angle' <- getRandomR(0.0, 2*pi)
+        return (movingDebris
+                Debris { poly = shipDebrisPolygons !! i, pos = p,
+                         vel = vector2 (vel' * sin angle') (vel' * cos angle'),
+                         life = life', done = NoEvent, spawn = NoEvent } )
 
 -- | Construct a list of moving game objects from a list of initial configurations.
 movingObjects :: RandomGen g => g -> [Object] -> Object -> SF (Event KeyEvent) (IL Object)
@@ -515,6 +534,12 @@ dustPolygon :: Polygon
 dustPolygon = [( -0.001,-0.001),(-0.001, 0.001),(0.001, 0.001),
                   ( 0.001,-0.001)]
 
+shipDebrisPolygons :: [Polygon]
+shipDebrisPolygons = [[( -0.006,-0.016),(0.000,0.016)],
+                      [(0.000,0.016),(0.006,-0.016)],
+                      [(0.000,-0.024),( -0.004,-0.018)],
+                      [( 0.000,-0.012),(-0.006,-0.016)]]
+
 renderShip :: Object -> Canvas ()
 renderShip s = do
     save ()
@@ -572,7 +597,7 @@ renderObject obj = case obj of
     Ship _ _ _ _ _ _ _ _       -> renderShip obj
     Missile _ _ _ _ _          -> renderMissile obj
     Debris _ _ _ _ _ _         -> renderDebris obj
-    Game _ _ _ _ _             -> renderGame obj
+    Game _ _ _ _               -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
