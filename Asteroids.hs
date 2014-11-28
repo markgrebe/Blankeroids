@@ -44,7 +44,6 @@ data Object = Asteroid { poly   :: Polygon,
                          angPos :: AngPosition,
                          radius :: Double,
                          thrusting :: Bool,
-                         fire   :: Event (),
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -61,13 +60,19 @@ data Object = Asteroid { poly   :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
+            | Game     { scoore :: Integer,
+                         lives  :: Integer,
+                         life   :: Double,
+                         done   :: Event (),
+                         spawn  :: Event [SFObject]
+                       }
 
 type SFObject = SF (Event KeyEvent) Object
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ _ _ -> True
-    _                      -> False
+    Ship _ _ _ _ _ _ _ _ -> True
+    _                    -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
@@ -180,14 +185,7 @@ theShip :: Object
 theShip = Ship {poly = shipPolygon,
                 pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                 angPos = 0.0, radius = 0.016, thrusting = False,
-                fire = NoEvent, done = NoEvent, spawn = NoEvent }
-
-launchMissile :: Object -> Object
-launchMissile s = Missile { poly = missilePolygon,
-                            pos = (pos s), --ToDo caculate ship tip pos
-                            vel = vector2 (-missileVel * sin (angPos s))
-                                          ( missileVel * cos (angPos s)),
-                            done = NoEvent, spawn  = NoEvent }
+                done = NoEvent, spawn = NoEvent }
 
 ---------------------------------------------------
 main :: IO ()
@@ -295,19 +293,27 @@ movingDebris d = proc _ -> do
     returnA -< d { pos = pos', done = done'}
 
 movingShip :: RandomGen g => g -> Object -> SFObject
-movingShip g a = proc ev -> do
+movingShip g s = proc ev -> do
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
-    fire' <- arr fireCannon -< ev
+    fire <- arr fireCannon -< ev
     rec
         accel <- arr calcAccel -< (ev, angPos', vel')
         vel' <- integral -< accel
-    pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< vel'
-    returnA -< updateShip pos' vel' angPos' ((vector2Rho accel) > 0.1) fire'
+    pos' <- wrapObject (radius s) <<< ((pos s) ^+^) ^<< integral -< vel'
+    returnA -< s { pos = pos', vel = vel', angPos = angPos',
+                   thrusting = ((vector2Rho accel) > 0.1),
+                   done = destroyedToUnit ev,
+                   spawn = fire `tag` (addMissile pos' angPos') }
   where
-    updateShip :: Position -> Velocity -> AngPosition -> Bool -> Event () -> Object
-    updateShip p' v' ap' t' f' = a { pos = p', vel = v',
-                                     angPos = ap', thrusting = t',
-                                     fire = f' }
+    addMissile :: Position -> AngPosition -> [SFObject]
+    addMissile p' ap' = [movingMissile $ launchMissile p' ap']
+
+    launchMissile :: Position -> AngPosition -> Object
+    launchMissile p' ap' = Missile { poly = missilePolygon,
+                                     pos = p', --ToDo caculate ship tip pos
+                                     vel = vector2 (-missileVel * sin ap')
+                                                   ( missileVel * cos ap'),
+                                     done = NoEvent, spawn  = NoEvent }
 
     accumAngPos :: Double -> KeyEvent -> Double
     accumAngPos start TurnRight = start - (pi / 8)
@@ -339,9 +345,18 @@ movingObjects g as ship = playGame (listToIL ([shipSF] ++ aSFs))
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
-    ship = head $ assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
-    asteroids os = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) os
-    missiles os = assocsIL $ filterIL (\(_, obj) -> isMissile obj) os
+    ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
+    missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
+    sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
+    sAsHits ((sk, so):[]) ((_,ao):rest) =
+      if polygonInPolygon sPolygon aPolygon
+      then [sk]
+      else sAsHits [(sk, so)] rest
+        where
+          sPolygon = transformPoly (angPos so) (pos2Point (pos so)) (poly so)
+          aPolygon = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
+    sAsHits _        _              = []
     mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [ILKey]
     mAsHits _        []             = []
     mAsHits (mk, mo) ((ak,ao):rest) =
@@ -353,24 +368,15 @@ route (keyEv,objs) sfs = mapIL route' sfs
     msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
-    hits = nub $ msAsHits (missiles objs) (asteroids objs)
+    hits = nub $ (msAsHits missiles asteroids ++ sAsHits ships asteroids)
     route' :: (ILKey, sf) -> (Event KeyEvent, sf)
     route' (k,sfObj) = if k `elem` hits
                        then (Event Destroyed, sfObj)
                        else (keyEv, sfObj)
 
 killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
-killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent ([fireEvent] ++ doneEvents ++ spawnEvents)
+killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
   where
-    shipObj :: Object
-    shipObj = filter isShip (elemsIL objs) !! 0
-
-    addMissile :: IL SFObject -> IL SFObject
-    addMissile os = insertIL_ (movingMissile $ launchMissile shipObj) os
-
-    fireEvent :: Event (IL SFObject -> IL SFObject)
-    fireEvent = (fire shipObj) `tag` addMissile
-
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
     doneEvents = [ (done obj) `tag` (deleteIL k) | (k,obj) <- assocsIL objs ]
 
@@ -555,12 +561,18 @@ renderDebris d = do
     stroke()
     restore ()
 
+renderGame :: Object -> Canvas ()
+renderGame g = do
+    save ()
+    restore ()
+
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship _ _ _ _ _ _ _ _ _     -> renderShip obj
+    Ship _ _ _ _ _ _ _ _       -> renderShip obj
     Missile _ _ _ _ _          -> renderMissile obj
     Debris _ _ _ _ _ _         -> renderDebris obj
+    Game _ _ _ _ _             -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
