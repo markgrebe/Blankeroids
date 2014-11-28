@@ -8,6 +8,7 @@ import FRP.Yampa
 import FRP.Yampa.Vector2
 import Data.Fixed(mod')
 import Data.List(nub, mapAccumL)
+import Data.Maybe
 
 import FRP.Yampa.Canvas
 
@@ -66,7 +67,7 @@ data Object = Asteroid { poly   :: Polygon,
                          spawn  :: Event [SFObject]
                        }
 
-type SFObject = SF (Event KeyEvent) Object
+type SFObject = SF (Event GameEvent) Object
 
 isGame :: Object -> Bool
 isGame obj = case obj of
@@ -106,6 +107,8 @@ missileVel    :: Double
 missileVel    = 0.5
 missileLife   :: Double
 missileLife   = 1.0
+asteroidValues :: [Int]
+asteroidValues = [20, 50, 100]
 
 randGenList :: RandomGen g => g -> [g]
 randGenList g = g' : randGenList g''
@@ -213,12 +216,18 @@ animateAsteriods g = reactimateSFinContext handleKeyEvents
 
 ---------------------------------------------------
 
-data KeyEvent = TurnRight | TurnLeft | Thruster | Fire | Destroyed | Spawn
+data GameEvent = TurnLeft |
+                 TurnRight |
+                 Thruster |
+                 Fire |
+                 Destroyed { change :: Int} |
+                 NewRound |
+                 ScoreChange { change :: Int}
     deriving (Show, Eq)
 
-destroyedToUnit :: Event KeyEvent -> Event ()
-destroyedToUnit (Event Destroyed) = Event ()
-destroyedToUnit _                 = NoEvent
+destroyedToUnit :: Event GameEvent -> Event ()
+destroyedToUnit (Event (Destroyed _)) = Event ()
+destroyedToUnit _                     = NoEvent
 
 rightKey :: Int
 rightKey = 39
@@ -231,7 +240,7 @@ downKey  = 40
 spaceKey :: Int
 spaceKey = 32
 
-handleKeyEvents :: Graphics.Blank.Event -> Canvas (Event KeyEvent)
+handleKeyEvents :: Graphics.Blank.Event -> Canvas (Event GameEvent)
 handleKeyEvents blankEvent = do
     let keyEvent = case (eWhich blankEvent) of
                     Just a | a == rightKey -> Event TurnRight
@@ -329,16 +338,16 @@ movingShip g s = proc ev -> do
                                                    ( missileVel * cos ap'),
                                      done = NoEvent, spawn  = NoEvent }
 
-    accumAngPos :: Double -> KeyEvent -> Double
+    accumAngPos :: Double -> GameEvent -> Double
     accumAngPos start TurnRight = start - (pi / 8)
     accumAngPos start TurnLeft  = start + (pi / 8)
     accumAngPos start _         = start
 
-    fireCannon :: Event KeyEvent -> Event ()
+    fireCannon :: Event GameEvent -> Event ()
     fireCannon (Event Fire) = Event ()
     fireCannon _            = NoEvent
 
-    calcAccel :: (Event KeyEvent, AngPosition, Velocity) -> Acceleration
+    calcAccel :: (Event GameEvent, AngPosition, Velocity) -> Acceleration
     calcAccel (Event Thruster, currAngPos, _) =
         vector2 (-shipThrust * sin currAngPos) (shipThrust * cos currAngPos)
     calcAccel (_             , _     , currVel) =
@@ -365,16 +374,24 @@ movingShip g s = proc ev -> do
 
 playingGame :: RandomGen g => g -> Object -> SFObject
 playingGame g gm = proc ev -> do
---    score' <-    -< ev
---    lives' <-    -< ev
-    returnA -< gm { score = score', lives = lives' }
+    score' <- accumHoldBy accumScore 0 -< ev
+    lives' <- accumHoldBy accumLives 3 -< ev
+    returnA -< updateGame gm score' lives'
   where
-    score' = 0
-    lives' = 0
+    updateGame :: Object -> Int -> Int -> Object
+    updateGame o s l = gm { score = observe "Score" s, lives = observe "Lives" l }
+    accumScore :: Int -> GameEvent -> Int
+    accumScore start (Destroyed s)    = start + s
+    accumScore start (ScoreChange s ) = start + s
+    accumScore start _         = start
+
+    accumLives :: Int -> GameEvent -> Int
+    accumLives start (Destroyed _) = start - 1
+    accumLives start _             = start
 
 -- | Construct a list of moving game objects from a list of initial configurations.
-movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event KeyEvent) (IL Object)
-movingObjects g as ship gm = playGame (listToIL ([shipSF] ++ aSFs))
+movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event GameEvent) (IL Object)
+movingObjects g as ship gm = playGame (listToIL ([gameSF, shipSF] ++ aSFs))
   where
     (g1, g2) = split g
     (g3, g4) = split g1
@@ -382,14 +399,14 @@ movingObjects g as ship gm = playGame (listToIL ([shipSF] ++ aSFs))
     shipSF = movingShip g3 ship
     gameSF = playingGame g4 gm
 
-route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
+route :: (Event GameEvent, IL Object) -> IL sf -> IL (Event GameEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
-    shipKeys = map fst ships
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
-    game' = head $ assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
+    games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
+    game' = if null games then Nothing else Just (fst $ head games)
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
     sAsHits ((sk, so):[]) ((_,ao):rest) =
       if polygonInPolygon sPolygon aPolygon
@@ -410,13 +427,25 @@ route (keyEv,objs) sfs = mapIL route' sfs
     msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
-    hits = nub $ (msAsHits missiles asteroids ++ sAsHits ships asteroids)
-    route' :: (ILKey, sf) -> (Event KeyEvent, sf)
-    route' (k,sfObj) = if k `elem` hits
-                       then (Event Destroyed, sfObj)
-                       else (keyEv, sfObj)
+    missileHits = nub $ msAsHits missiles asteroids
+    shipHits = nub $ sAsHits ships asteroids
+    scoreChanged = sum $ map getAsteroidValue missileHits
+    getAsteroidValue :: ILKey -> Int
+    getAsteroidValue k = if isAsteroid obj
+                         then asteroidValues !! (gen obj)
+                         else 0
+      where
+        obj = fromJust $ lookupIL k objs
+    route' :: (ILKey, sf) -> (Event GameEvent, sf)
+    route' (k,sfObj) | isJust game' && game' == Just k && length shipHits == 0 =
+                (Event (ScoreChange scoreChanged), sfObj)
+    route' (k,sfObj) | isJust game' && game' == Just k =
+                (Event (Destroyed scoreChanged), sfObj)
+    route' (k,sfObj) = if k `elem` (missileHits ++ shipHits)
+                            then (Event (Destroyed 0), sfObj)
+                            else (keyEv, sfObj)
 
-killOrSpawn :: ((Event KeyEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
+killOrSpawn :: ((Event GameEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
   where
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
@@ -425,10 +454,10 @@ killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
     spawnEvents :: [Event (IL SFObject -> IL SFObject)]
     spawnEvents = [ fmap (foldl (.) id . map insertIL_) (spawn obj) | (_,obj) <- assocsIL objs ]
 
-game :: IL SFObject -> SF (Event KeyEvent, IL Object) (IL Object)
+game :: IL SFObject -> SF (Event GameEvent, IL Object) (IL Object)
 game objs = dpSwitch route objs (arr killOrSpawn >>> notYet) (\sfs f -> game (f sfs))
 
-playGame :: IL SFObject -> SF (Event KeyEvent) (IL Object)
+playGame :: IL SFObject -> SF (Event GameEvent) (IL Object)
 playGame sfobjs = proc ev -> do
   rec
     objs <- game sfobjs -< (ev, objsp)
@@ -562,6 +591,53 @@ shipDebrisPolygons = [[( -0.006,-0.016),(0.000,0.016)],
                       [(0.000,0.016),(0.006,-0.016)],
                       [(0.000,-0.024),( -0.004,-0.018)],
                       [( 0.000,-0.012),(-0.006,-0.016)]]
+
+digitZeroPolygon :: Polygon
+digitZeroPolygon = [(-0.015, 0.023),( 0.015, 0.023),( 0.015,-0.023),
+                    (-0.015,-0.023),(-0.015, 0.023)]
+
+digitOnePolygon :: Polygon
+digitOnePolygon = [( 0.015, 0.023),( 0.015,-0.023)]
+
+digitTwoPolygon :: Polygon
+digitTwoPolygon = [(-0.015, 0.023),( 0.015, 0.023),( 0.015, 0.000),
+                   (-0.015, 0.000),(-0.015,-0.023),( 0.015,-0.023)]
+
+digitThreePolygon :: Polygon
+digitThreePolygon = [(-0.015, 0.023),( 0.015, 0.023),( 0.015, 0.000),
+                     (-0.015, 0.000),( 0.015, 0.000),( 0.015,-0.023),
+                     (-0.015,-0.023)]
+
+digitFourPolygon :: Polygon
+digitFourPolygon = [(-0.015, 0.023),(-0.015, 0.000),( 0.015, 0.000),
+                    ( 0.015,-0.023),( 0.015, 0.023)]
+
+digitFivePolygon :: Polygon
+digitFivePolygon = [( 0.015, 0.023),(-0.015, 0.023),(-0.015, 0.000),
+                    ( 0.015, 0.000),( 0.015,-0.023),(-0.015,-0.023)]
+
+digitSixPolygon :: Polygon
+digitSixPolygon = [( 0.015, 0.023),(-0.015, 0.023),(-0.015, 0.000),
+                   ( 0.015, 0.000),( 0.015,-0.023),(-0.015,-0.023),
+                   (-0.015, 0.000)]
+
+digitSevenPolygon :: Polygon
+digitSevenPolygon = [(-0.015, 0.023),( 0.015, 0.023),( 0.015,-0.023)]
+
+digitEightPolygon :: Polygon
+digitEightPolygon = [(-0.015, 0.023),( 0.015, 0.023),( 0.015,-0.023),
+                     (-0.015,-0.023),(-0.015, 0.023),(-0.015, 0.000),
+                     ( 0.015, 0.000)]
+
+digitNinePolygon :: Polygon
+digitNinePolygon = [(-0.015,-0.023),( 0.015,-0.023),( 0.015, 0.023),
+                    (-0.015, 0.023),(-0.015, 0.000),( 0.015, 0.000)]
+
+digitPoloygons :: [Polygon]
+digitPoloygons = [digitZeroPolygon, digitOnePolygon, digitTwoPolygon,
+                  digitThreePolygon, digitFourPolygon, digitFivePolygon,
+                  digitSixPolygon, digitSevenPolygon, digitEightPolygon,
+                  digitNinePolygon]
 
 renderShip :: Object -> Canvas ()
 renderShip s = do
