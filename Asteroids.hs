@@ -60,13 +60,18 @@ data Object = Asteroid { poly   :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
-            | Game     { scoore :: Integer,
-                         lives  :: Integer,
+            | Game     { score  :: Int,
+                         lives  :: Int,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
 
 type SFObject = SF (Event KeyEvent) Object
+
+isGame :: Object -> Bool
+isGame obj = case obj of
+    Game _ _ _ _ -> True
+    _            -> False
 
 isShip :: Object -> Bool
 isShip obj = case obj of
@@ -186,6 +191,10 @@ theShip = Ship {poly = shipPolygon,
                 angPos = 0.0, radius = 0.016, thrusting = False,
                 done = NoEvent, spawn = NoEvent }
 
+theGame :: Object
+theGame = Game {score = 0, lives = 3,
+                done = NoEvent, spawn = NoEvent }
+
 ---------------------------------------------------
 main :: IO ()
 main = do
@@ -197,13 +206,14 @@ animateAsteriods :: RandomGen g => g -> DeviceContext -> IO ()
 animateAsteriods g = reactimateSFinContext handleKeyEvents
                                            renderScene
                                            (movingObjects
-                                              g' (genInitialAsteroids g'') theShip)
+                                              g' (genInitialAsteroids g'')
+                                              theShip theGame)
   where
     (g', g'') = split g
 
 ---------------------------------------------------
 
-data KeyEvent = TurnRight | TurnLeft | Thruster | Fire | Destroyed
+data KeyEvent = TurnRight | TurnLeft | Thruster | Fire | Destroyed | Spawn
     deriving (Show, Eq)
 
 destroyedToUnit :: Event KeyEvent -> Event ()
@@ -353,20 +363,33 @@ movingShip g s = proc ev -> do
                          vel = vector2 (vel' * sin angle') (vel' * cos angle'),
                          life = life', done = NoEvent, spawn = NoEvent } )
 
--- | Construct a list of moving game objects from a list of initial configurations.
-movingObjects :: RandomGen g => g -> [Object] -> Object -> SF (Event KeyEvent) (IL Object)
-movingObjects g as ship = playGame (listToIL ([shipSF] ++ aSFs))
+playingGame :: RandomGen g => g -> Object -> SFObject
+playingGame g gm = proc ev -> do
+--    score' <-    -< ev
+--    lives' <-    -< ev
+    returnA -< gm { score = score', lives = lives' }
   where
-    (g', g'') = split g
-    aSFs = movingRandomAsteroids g' as
-    shipSF = movingShip g'' ship
+    score' = 0
+    lives' = 0
+
+-- | Construct a list of moving game objects from a list of initial configurations.
+movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event KeyEvent) (IL Object)
+movingObjects g as ship gm = playGame (listToIL ([shipSF] ++ aSFs))
+  where
+    (g1, g2) = split g
+    (g3, g4) = split g1
+    aSFs = movingRandomAsteroids g2 as
+    shipSF = movingShip g3 ship
+    gameSF = playingGame g4 gm
 
 route :: (Event KeyEvent, IL Object) -> IL sf -> IL (Event KeyEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    shipKeys = map fst ships
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
+    game' = head $ assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
     sAsHits ((sk, so):[]) ((_,ao):rest) =
       if polygonInPolygon sPolygon aPolygon
