@@ -547,6 +547,12 @@ renderPolygon p = do
     mapM_ lineTo (tail p)
     closePath ()
 
+renderPolygons :: [Polygon] -> Canvas ()
+renderPolygons p = do
+    beginPath ()
+    mapM_ renderPolygon p
+    closePath ()
+
 asteroid1 :: Polygon
 asteroid1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
                 ( 0.016,-0.060),( 0.062,-0.030),( 0.064,-0.014),
@@ -571,12 +577,12 @@ asterPolygons :: [Polygon]
 asterPolygons = [asteroid1,asteroid2,asteroid3]
 
 shipPolygon :: Polygon
-shipPolygon = [( -0.006,-0.016),(0.000,0.016),(0.006,-0.016),
-                ( 0.000,-0.012),(-0.006,-0.016)]
+shipPolygon = [( -0.008,-0.016),(0.000,0.016),(0.008,-0.016),
+                ( 0.000,-0.012),(-0.008,-0.016)]
 
 thrustPolygon :: Polygon
-thrustPolygon = [(0.000,-0.012),(0.004,-0.018),(0.000,-0.024),
-                ( -0.004,-0.018),(0.000,-0.012)]
+thrustPolygon = [(0.000,-0.012),(0.006,-0.018),(0.000,-0.024),
+                ( -0.006,-0.018),(0.000,-0.012)]
 
 missilePolygon :: Polygon
 missilePolygon = [( -0.001,-0.001),(-0.001, 0.001),(0.001, 0.001),
@@ -633,8 +639,8 @@ digitNinePolygon :: Polygon
 digitNinePolygon = [(-0.015,-0.023),( 0.015,-0.023),( 0.015, 0.023),
                     (-0.015, 0.023),(-0.015, 0.000),( 0.015, 0.000)]
 
-digitPoloygons :: [Polygon]
-digitPoloygons = [digitZeroPolygon, digitOnePolygon, digitTwoPolygon,
+digitPolygons :: [Polygon]
+digitPolygons = [digitZeroPolygon, digitOnePolygon, digitTwoPolygon,
                   digitThreePolygon, digitFourPolygon, digitFivePolygon,
                   digitSixPolygon, digitSevenPolygon, digitEightPolygon,
                   digitNinePolygon]
@@ -688,15 +694,38 @@ renderDebris d = do
 renderGame :: Object -> Canvas ()
 renderGame g = do
     save ()
+    renderPolygons placedScorePolygons
+    lineWidth 0.001
+    strokeStyle "white"
+    stroke()
     restore ()
+  where
+    placedScorePolygons :: [Polygon]
+    placedScorePolygons = map translatePolyPair (zip digitPositions scorePolygons)
+    translatePolyPair :: (Point, Polygon) -> Polygon
+    translatePolyPair (pt,pol) = translatePoly pt pol
+    scorePolygons :: [Polygon]
+    scorePolygons = map digToPolygon scoreDigs
+    scoreDigs :: [Int]
+    scoreDigs = reverse $ digs (score g)
+    digToPolygon :: Int -> Polygon
+    digToPolygon d = digitPolygons !! d
+    digs :: Int -> [Int]
+    digs 0 = [0]
+    digs x = digs' x
+    digs' :: Int -> [Int]
+    digs' 0 = []
+    digs' x = x `mod` 10 : digs (x `div` 10)
+    digitPositions :: [Point]
+    digitPositions = zip [0.120,0.100..0.020] (take 6 $ repeat 0.950)
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship _ _ _ _ _ _ _ _       -> renderShip obj
-    Missile _ _ _ _ _          -> renderMissile obj
-    Debris _ _ _ _ _ _         -> renderDebris obj
-    Game _ _ _ _               -> renderGame obj
+    Ship     _ _ _ _ _ _ _ _   -> renderShip obj
+    Missile  _ _ _ _ _         -> renderMissile obj
+    Debris   _ _ _ _ _ _       -> renderDebris obj
+    Game     _ _ _ _           -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
