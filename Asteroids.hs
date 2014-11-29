@@ -6,8 +6,9 @@ import Graphics.Blank hiding (Event)
 import qualified Graphics.Blank (Event)
 import FRP.Yampa
 import FRP.Yampa.Vector2
+import Data.Char(digitToInt)
 import Data.Fixed(mod')
-import Data.List(nub, mapAccumL)
+import Data.List(nub, mapAccumL, (\\))
 import Data.Maybe
 
 import FRP.Yampa.Canvas
@@ -379,7 +380,8 @@ playingGame g gm = proc ev -> do
     returnA -< updateGame gm score' lives'
   where
     updateGame :: Object -> Int -> Int -> Object
-    updateGame o s l = gm { score = observe "Score" s, lives = observe "Lives" l }
+    updateGame o s l = gm { score = s, lives = l }
+
     accumScore :: Int -> GameEvent -> Int
     accumScore start (Destroyed s)    = start + s
     accumScore start (ScoreChange s ) = start + s
@@ -545,13 +547,17 @@ renderPolygon p = do
     beginPath ()
     moveTo (head p)
     mapM_ lineTo (tail p)
-    closePath ()
+
+renderPolygonStroke :: Polygon -> Canvas ()
+renderPolygonStroke p = do
+    renderPolygon p
+    lineWidth 0.002
+    strokeStyle "white"
+    stroke()
 
 renderPolygons :: [Polygon] -> Canvas ()
 renderPolygons p = do
-    beginPath ()
-    mapM_ renderPolygon p
-    closePath ()
+    mapM_ renderPolygonStroke p
 
 asteroid1 :: Polygon
 asteroid1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
@@ -694,30 +700,30 @@ renderDebris d = do
 renderGame :: Object -> Canvas ()
 renderGame g = do
     save ()
-    renderPolygons placedScorePolygons
+    renderPolygons (placedScorePolygons ++ placedLifePolygons)
     lineWidth 0.001
     strokeStyle "white"
     stroke()
     restore ()
   where
+    placedLifePolygons :: [Polygon]
+    placedLifePolygons = map translatePolyPair (zip shipPositions lifePolygons)
     placedScorePolygons :: [Polygon]
     placedScorePolygons = map translatePolyPair (zip digitPositions scorePolygons)
     translatePolyPair :: (Point, Polygon) -> Polygon
     translatePolyPair (pt,pol) = translatePoly pt pol
+    lifePolygons :: [Polygon]
+    lifePolygons = take (lives g) (repeat shipPolygon)
     scorePolygons :: [Polygon]
-    scorePolygons = map digToPolygon scoreDigs
-    scoreDigs :: [Int]
-    scoreDigs = reverse $ digs (score g)
+    scorePolygons = map digToPolygon (reverse $ digs (score g))
     digToPolygon :: Int -> Polygon
     digToPolygon d = digitPolygons !! d
     digs :: Int -> [Int]
-    digs 0 = [0]
-    digs x = digs' x
-    digs' :: Int -> [Int]
-    digs' 0 = []
-    digs' x = x `mod` 10 : digs (x `div` 10)
+    digs n = map digitToInt $ show n
     digitPositions :: [Point]
-    digitPositions = zip [0.120,0.100..0.020] (take 6 $ repeat 0.950)
+    digitPositions = zip [0.220,0.180..0.020] (take 6 $ repeat 0.950)
+    shipPositions :: [Point]
+    shipPositions =  zip [0.220,0.200..0.120] (take 6 $ repeat 0.890)
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
