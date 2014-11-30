@@ -64,6 +64,7 @@ data Object = Asteroid { poly   :: Polygon,
                        }
             | Game     { score  :: Int,
                          lives  :: Int,
+                         theRound  :: Int,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -72,8 +73,8 @@ type SFObject = SF (Event GameEvent) Object
 
 isGame :: Object -> Bool
 isGame obj = case obj of
-    Game _ _ _ _ -> True
-    _            -> False
+    Game _ _ _ _ _ -> True
+    _              -> False
 
 isShip :: Object -> Bool
 isShip obj = case obj of
@@ -193,7 +194,7 @@ theShip = Ship {poly = shipPolygon,
                 done = NoEvent, spawn = NoEvent }
 
 theGame :: Object
-theGame = Game {score = 0, lives = 3,
+theGame = Game {score = 0, lives = 3, theRound = 1,
                 done = NoEvent, spawn = NoEvent }
 
 ---------------------------------------------------
@@ -218,13 +219,15 @@ data GameEvent = TurnLeft |
                  TurnRight |
                  Thruster |
                  Fire |
-                 Destroyed { change :: Int} |
-                 NewRound |
-                 ScoreChange { change :: Int}
+                 Hyperspace |
+                 Destroyed |
+                 GameChange { scoreChanged :: Int,
+                              shipDestroyed :: Bool,
+                              newRound :: Bool }
     deriving (Show, Eq)
 
 destroyedToUnit :: Event GameEvent -> Event ()
-destroyedToUnit (Event (Destroyed _)) = Event ()
+destroyedToUnit (Event Destroyed) = Event ()
 destroyedToUnit _                     = NoEvent
 
 rightKey :: Int
@@ -374,19 +377,20 @@ playingGame :: RandomGen g => g -> Object -> SFObject
 playingGame g gm = proc ev -> do
     score' <- accumHoldBy accumScore 0 -< ev
     lives' <- accumHoldBy accumLives 3 -< ev
-    returnA -< updateGame gm score' lives'
+    round' <- accumHoldBy accumRounds 1 -< ev
+    returnA -< gm { score = score', lives = lives', theRound = round' }
   where
-    updateGame :: Object -> Int -> Int -> Object
-    updateGame o s l = gm { score = s, lives = l }
-
     accumScore :: Int -> GameEvent -> Int
-    accumScore start (Destroyed s)    = start + s
-    accumScore start (ScoreChange s ) = start + s
+    accumScore start GameChange { scoreChanged = s} = start + s
     accumScore start _         = start
 
     accumLives :: Int -> GameEvent -> Int
-    accumLives start (Destroyed _) = start - 1
+    accumLives start GameChange {shipDestroyed = sd} | sd == True = start - 1
     accumLives start _             = start
+
+    accumRounds :: Int -> GameEvent -> Int
+    accumRounds start GameChange {newRound = rc} | rc == True = start + 1
+    accumRounds start _          = start
 
 -- | Construct a list of moving game objects from a list of initial configurations.
 movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event GameEvent) (IL Object)
@@ -404,48 +408,54 @@ route (keyEv,objs) sfs = mapIL route' sfs
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
+--    game' = fst $ head $ assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     game' = if null games then Nothing else Just (fst $ head games)
-    sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
+    sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     sAsHits ((sk, so):[]) ((ak,ao):rest) =
       if polygonInPolygon sPolygon aPolygon
-      then [sk, ak]
+      then (sk, ak) : (sAsHits [(sk, so)] rest)
       else sAsHits [(sk, so)] rest
         where
           sPolygon = transformPoly (angPos so) (pos2Point (pos so)) (poly so)
           aPolygon = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
     sAsHits _        _              = []
-    mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [ILKey]
+    mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     mAsHits _        []             = []
     mAsHits (mk, mo) ((ak,ao):rest) =
       if pointInPolygon (pos2Point (pos mo)) polygon'
-      then mk : ak : (mAsHits (mk, mo) rest)
+      then (mk, ak) : (mAsHits (mk, mo) rest)
       else mAsHits (mk, mo) rest
         where
           polygon' = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
-    msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
+    msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey, ILKey)]
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
-    missileHits = nub $ msAsHits missiles asteroids
-    shipHits = nub $ sAsHits ships asteroids
-    scoreChanged = sum $ map getAsteroidValue (missileHits ++ shipHits)
+    (missileHits, asteroidMissileHits) = unzip $ msAsHits missiles asteroids
+    (shipHits, asteroidShipHits) = unzip $ sAsHits ships asteroids
+    asteroidHits = nub $ asteroidMissileHits ++ asteroidShipHits
+    missileHits' = nub missileHits
+    shipHits' = nub shipHits
+    allHits = asteroidHits ++ missileHits' ++ shipHits'
+    roundComplete = length asteroidHits == length asteroids
+    scoreChanged' = sum $ map getAsteroidValue asteroidHits
+    shipDestroyed' = length shipHits /= 0
     getAsteroidValue :: ILKey -> Int
-    getAsteroidValue k = if isAsteroid obj
-                         then asteroidValues !! (gen obj)
-                         else 0
+    getAsteroidValue k = asteroidValues !! (gen obj)
       where
         obj = fromJust $ lookupIL k objs
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
-    route' (k,sfObj) | isJust game' &&
-                       game' == Just k &&
-                       length shipHits == 0 &&
-                       scoreChanged /= 0 =
-                (Event (ScoreChange (trace ("score " ++ show k ++ " " ++ show scoreChanged) scoreChanged)), sfObj)
-    route' (k,sfObj) | isJust game' && game' == Just k =
-                (Event (Destroyed scoreChanged), sfObj)
-    route' (k,sfObj) = if (trace ("other " ++ show k) k) `elem` (missileHits ++ shipHits)
-                            then (Event (Destroyed 0), sfObj)
+    route' (k,sfObj) | isJust game' && game' == Just k = routeGame' (k,sfObj)
+    route' (k,sfObj) = if (trace ("other " ++ show k) k) `elem` allHits
+                            then (Event Destroyed, sfObj)
                             else (keyEv, sfObj)
+    routeGame' :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeGame' (_,sfObj) =
+        if scoreChanged' == 0 && (not shipDestroyed') && (not roundComplete)
+        then (NoEvent, sfObj)
+        else (Event (GameChange {scoreChanged = scoreChanged',
+                                 shipDestroyed = shipDestroyed',
+                                 newRound = roundComplete}), sfObj)
 
 killOrSpawn :: ((Event GameEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
@@ -731,7 +741,7 @@ renderObject obj = case obj of
     Ship     _ _ _ _ _ _ _ _   -> renderShip obj
     Missile  _ _ _ _ _         -> renderMissile obj
     Debris   _ _ _ _ _ _       -> renderDebris obj
-    Game     _ _ _ _           -> renderGame obj
+    Game     _ _ _ _ _         -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
