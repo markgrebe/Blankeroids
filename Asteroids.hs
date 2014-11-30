@@ -118,25 +118,26 @@ randGenList g = g' : randGenList g''
 
 initAsteroid :: RandomGen g => Rand g Object
 initAsteroid = do
-    -- Get random lists of x,y coordinates
-    xs <- getRandomRs (0.0, 1.0)
-    ys <- getRandomRs (0.0, 1.0)
-    -- Find an x,y pair that is not in center of the screen
-    let (x,y) = head . dropWhile inCenter . zip xs $ ys
+    -- Get an initial position on the edge of the screen.
+    initPos <- getRandomR (0.0, 4.0)
+    let (x,y) = if initPos < 1.0 then (initPos, 0.0)
+           else if initPos < 2.0 then (1.0, initPos - 1.0)
+           else if initPos < 3.0 then (initPos - 2.0, 1.0)
+           else                       (0.0, initPos - 3.0)
     -- Get a random angle for velocity
-    thetaRand <- getRandomR (0.0, pi / 2)
+    thetaRand <- getRandomR (0.0, pi)
     -- Get a random angle for position
     angRand <- getRandomR (0.0, 2 * pi)
     -- Get a random angular velocity
     angVelRand <- getRandomR (-0.5,0.5)
-    -- Get a random asteroid
+    -- Get a random asteroid shape
     asterIndex <- getRandomR (0,length(asterPolygons) - 1)
     -- Based on quadrant of the screen of x,y, set velocity in the general
     -- direction of the center
-    let thetav = if x <= 0.5 && y <= 0.5 then thetaRand
-            else if x <= 0.5 && y >  0.5 then thetaRand + 3 * pi / 2
-            else if x >  0.5 && y >  0.5 then thetaRand + pi
-            else                              thetaRand + pi / 2
+    let thetav = if y == 0.0 then thetaRand -- ^ thetaRand - pi / 2
+            else if x == 1.0 then thetaRand + pi / 2 -- ^ thetaRand - pi
+            else if y == 1.0 then thetaRand + pi -- ^ thetaRand + pi / 2
+            else                  thetaRand - pi / 2 -- ^ thetaRand
     -- Magnitude of the velocity should be initAsterVel
     let xv = initAsterVel * cos thetav
     let yv = initAsterVel * sin thetav
@@ -147,13 +148,9 @@ initAsteroid = do
                         gen    = 0,
                         radius = asterGen1Rad,
                         done   = NoEvent,
-                        spawn  = Event [],
+                        spawn  = NoEvent,
                         poly   = asterPolygons !! asterIndex
                     }
-  where
-    inCenter :: (Double, Double) -> Bool
-    inCenter (x, y) = x >= centerMinEdge && x <= centerMaxEdge &&
-                      y >= centerMinEdge && y <= centerMaxEdge
 
 newAsteroids :: RandomGen g => Position -> Int -> Rand g [Object]
 newAsteroids p currgen = do
@@ -410,9 +407,9 @@ route (keyEv,objs) sfs = mapIL route' sfs
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     game' = if null games then Nothing else Just (fst $ head games)
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [ILKey]
-    sAsHits ((sk, so):[]) ((_,ao):rest) =
+    sAsHits ((sk, so):[]) ((ak,ao):rest) =
       if polygonInPolygon sPolygon aPolygon
-      then [sk]
+      then [sk, ak]
       else sAsHits [(sk, so)] rest
         where
           sPolygon = transformPoly (angPos so) (pos2Point (pos so)) (poly so)
@@ -431,7 +428,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
     missileHits = nub $ msAsHits missiles asteroids
     shipHits = nub $ sAsHits ships asteroids
-    scoreChanged = sum $ map getAsteroidValue missileHits
+    scoreChanged = sum $ map getAsteroidValue (missileHits ++ shipHits)
     getAsteroidValue :: ILKey -> Int
     getAsteroidValue k = if isAsteroid obj
                          then asteroidValues !! (gen obj)
@@ -439,11 +436,14 @@ route (keyEv,objs) sfs = mapIL route' sfs
       where
         obj = fromJust $ lookupIL k objs
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
-    route' (k,sfObj) | isJust game' && game' == Just k && length shipHits == 0 =
-                (Event (ScoreChange scoreChanged), sfObj)
+    route' (k,sfObj) | isJust game' &&
+                       game' == Just k &&
+                       length shipHits == 0 &&
+                       scoreChanged /= 0 =
+                (Event (ScoreChange (trace ("score " ++ show k ++ " " ++ show scoreChanged) scoreChanged)), sfObj)
     route' (k,sfObj) | isJust game' && game' == Just k =
                 (Event (Destroyed scoreChanged), sfObj)
-    route' (k,sfObj) = if k `elem` (missileHits ++ shipHits)
+    route' (k,sfObj) = if (trace ("other " ++ show k) k) `elem` (missileHits ++ shipHits)
                             then (Event (Destroyed 0), sfObj)
                             else (keyEv, sfObj)
 
