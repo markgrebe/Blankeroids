@@ -8,7 +8,7 @@ import FRP.Yampa
 import FRP.Yampa.Vector2
 import Data.Char(digitToInt)
 import Data.Fixed(mod')
-import Data.List(nub, mapAccumL, (\\))
+import Data.List(nub)
 import Data.Maybe
 
 import FRP.Yampa.Canvas
@@ -18,8 +18,8 @@ import Control.Monad.Random
 
 import IdentityList
 
-import Debug.Trace
-import Debug.Hood.Observe
+-- import Debug.Trace
+-- import Debug.Hood.Observe
 
 ---------------------------------------------------
 type Position = Vector2 Double
@@ -37,6 +37,8 @@ data Object = Asteroid { poly   :: Polygon,
                          angVel :: AngVelocity,
                          radius :: Double,
                          gen    :: Int,
+                         gameRound  :: Int,
+                         reqReanimate :: Bool,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -90,8 +92,8 @@ isMissile obj = case obj of
 
 isAsteroid :: Object -> Bool
 isAsteroid obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ _ -> True
-    _                          -> False
+    Asteroid _ _ _ _ _ _ _ _ _ _ _  -> True
+    _                               -> False
 
 initAsterVel  :: Double
 initAsterVel  = 0.1
@@ -121,8 +123,8 @@ randGenList g = g' : randGenList g''
   where
     (g', g'') = split g
 
-initAsteroid :: RandomGen g => Rand g Object
-initAsteroid = do
+initAsteroid :: RandomGen g => Int -> Rand g Object
+initAsteroid round' = do
     -- Get an initial position on the edge of the screen.
     initPos <- getRandomR (0.0, 4.0)
     let (x,y) = if initPos < 1.0 then (initPos, 0.0)
@@ -151,14 +153,16 @@ initAsteroid = do
                         angPos = angRand,
                         angVel = angVelRand,
                         gen    = 0,
+                        gameRound  = round',
                         radius = asterGen1Rad,
+                        reqReanimate = False,
                         done   = NoEvent,
                         spawn  = NoEvent,
                         poly   = asterPolygons !! asterIndex
                     }
 
-newAsteroids :: RandomGen g => Position -> Int -> Rand g [Object]
-newAsteroids p currgen = do
+newAsteroids :: RandomGen g => Position -> Int -> Int -> Rand g [Object]
+newAsteroids p currgen round' = do
     asters <- replicateM 2 oneAsteroid
     return asters
   where
@@ -181,15 +185,16 @@ newAsteroids p currgen = do
         return
             Asteroid { pos = p, vel = vector2 xv yv,
                        angPos = angRand, angVel = angVelRand,
-                       gen = currgen + 1, radius = sizeScale * asterGen1Rad,
-                       done = NoEvent, spawn = Event [],
+                       gen = currgen + 1, gameRound = round',
+                       radius = sizeScale * asterGen1Rad,
+                       reqReanimate = False, done = NoEvent, spawn = Event [],
                        poly = scalePoly sizeScale (asterPolygons !! asterIndex)}
 
-initAsteroids :: RandomGen g => Int -> Rand g [Object]
-initAsteroids count = replicateM count initAsteroid
+initAsteroids :: RandomGen g => Int -> Int -> Rand g [Object]
+initAsteroids count round' = replicateM count (initAsteroid round')
 
 genInitialAsteroids :: RandomGen g => g -> [Object]
-genInitialAsteroids g = evalRand (initAsteroids initAsterNum) g
+genInitialAsteroids g = evalRand (initAsteroids initAsterNum 1) g
 
 theShip :: Object
 theShip = Ship {poly = shipPolygon,
@@ -226,6 +231,7 @@ data GameEvent = TurnLeft |
                  Fire |
                  Hyperspace |
                  Destroyed |
+                 DestroyedLast |
                  Reanimate |
                  GameChange { scoreChanged :: Int,
                               shipDestroyed :: Bool,
@@ -235,6 +241,10 @@ data GameEvent = TurnLeft |
 destroyedToUnit :: Event GameEvent -> Event ()
 destroyedToUnit (Event Destroyed) = Event ()
 destroyedToUnit _                     = NoEvent
+
+reanimateToUnit :: Event GameEvent -> Event ()
+reanimateToUnit (Event Reanimate) = Event ()
+reanimateToUnit _                 = NoEvent
 
 rightKey :: Int
 rightKey = 39
@@ -282,27 +292,41 @@ movingAsteroid :: RandomGen g => g -> Object -> SFObject
 movingAsteroid g a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
-    returnA -< a { pos = pos', angPos = angPos',
-                   done = fst $ destOrReanToUnit ev,
-                   spawn = fst (destOrReanToUnit ev) `tag`
-                           newObjects (snd (destOrReanToUnit ev)) a pos' }
+    destroyed' <- accumHoldBy destroyedOccured False -< ev
+    reqReanimate' <- accumHoldBy destroyedOccured False <<< delayEvent 5.0 -< ev
+    returnA -< a { poly = if (destroyed') then [] else (poly a),
+                   pos = pos', angPos = angPos',
+                   reqReanimate = reqReanimate',
+                   done = merge (reanimateToUnit ev) (destroyedToUnit ev),
+                   spawn = mergeBy (++)
+                           (anyDestroyedToUnit ev `tag` newObjects a pos')
+                           (reanimateToUnit ev `tag` reanimateAsteroids ) }
   where
     (g1, g2) = split g
     (g3, g4) = split g1
 
-    destOrReanToUnit :: Event GameEvent -> (Event (), Bool)
-    destOrReanToUnit (Event Destroyed) = (Event (), False)
-    destOrReanToUnit (Event Reanimate) = (Event (), True)
-    destOrReanToUnit _                 = (NoEvent, False)
+    destroyedOccured :: Bool -> GameEvent -> Bool
+    destroyedOccured _       Destroyed     = True
+    destroyedOccured _       DestroyedLast = True
+    destroyedOccured initial _             = initial
 
-    newObjects :: Bool -> Object -> Position -> [SFObject]
-    newObjects True a' p =
-        evalRand (newDebris p) g2 ++
-        movingRandomAsteroids g3 (evalRand (initAsteroids newAsterNum) g4)
-    newObjects False a' p =
+    anyDestroyedToUnit :: Event GameEvent -> Event ()
+    anyDestroyedToUnit (Event Destroyed)     = Event ()
+    anyDestroyedToUnit (Event DestroyedLast) = Event ()
+    anyDestroyedToUnit _                     = NoEvent
+
+    reanimateAsteroids :: [SFObject]
+    reanimateAsteroids =
+        movingRandomAsteroids g3 (evalRand (initAsteroids numAsteroids gameRound') g4)
+      where
+        gameRound' = gameRound a
+        numAsteroids = initAsterNum + 2 * gameRound'
+
+    newObjects :: Object -> Position -> [SFObject]
+    newObjects a' p =
         evalRand (newDebris p) g2 ++
         if gen a' <= 1
-        then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a')) g4)
+        then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a') (gameRound a')) g4)
         else []
 
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
@@ -335,9 +359,10 @@ movingDebris d = proc _ -> do
 movingShip :: RandomGen g => g -> Object -> SFObject
 movingShip g s = proc ev -> do
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
-    fire <- arr fireCannon -< ev -- ToDo: Limit ship fire rate
-    destroyed' <- accumHoldBy occured False -< ev
-    reqReanimate' <- accumHoldBy occured False <<< delayEvent 5.0 -< ev
+    trigger <- arr fireCannon -< ev
+    (_, fire) <- magazine 4 4.5 -< trigger
+    destroyed' <- accumHoldBy destroyedOccured False -< ev
+    reqReanimate' <- accumHoldBy destroyedOccured False <<< delayEvent 5.0 -< ev
     rec
         accel <- arr calcAccel -< (ev, angPos', vel')
         vel' <- integral -< accel
@@ -353,19 +378,42 @@ movingShip g s = proc ev -> do
   where
     (g', g'') = split g
 
-    occured :: Bool -> GameEvent -> Bool
-    occured init Destroyed = True
-    occured init _         = init
+    destroyedOccured :: Bool -> GameEvent -> Bool
+    destroyedOccured _       Destroyed = True
+    destroyedOccured initial _         = initial
 
     addMissile :: Position -> AngPosition -> [SFObject]
     addMissile p' ap' = [movingMissile $ newMissile p' ap']
 
     newMissile :: Position -> AngPosition -> Object
     newMissile p' ap' = Missile { poly = missilePolygon,
-                                  pos = p', -- ToDo: caculate ship tip pos
+                                  pos = vector2 ((vector2X p') - 0.016 * sin ap')
+                                                ((vector2Y p') + 0.016 * cos ap'), -- ToDo: caculate ship tip pos
                                   vel = vector2 (-missileVel * sin ap')
                                                 ( missileVel * cos ap'),
                                   done = NoEvent, spawn  = NoEvent }
+
+    -- Ammunition magazine. Reloaded up to maximal capacity at constant rate.
+    -- n ... Maximal and initial number of missiles.
+    -- f .......... Reload rate.
+    -- input ...... Trigger.
+    -- output ..... Tuple: #1: Current number of missiles in magazine.
+    --                     #2: Missile fired event.
+    -- Reused from Yampa Space Invaders Example
+    -- Copyright (c) Yale University, 2003
+    magazine :: Int -> Double -> SF (Event ()) (Int, Event ())
+    magazine n f = proc trigger -> do
+      reload <- repeatedly (1/f) () -< ()
+      (level,canFire) <- accumHold (n,True) -< (trigger `tag` dec)
+                                                `lMerge` (reload `tag` inc)
+      returnA -< (level, trigger `gate` canFire)
+      where
+        inc :: (Int,Bool) -> (Int, Bool)
+        inc (l,_) | l < n = (l + 1, l > 0)
+                  | otherwise = (l, True)
+        dec :: (Int,Bool) -> (Int, Bool)
+        dec (l,_) | l > 0 = (l - 1, True)
+                  | otherwise = (l, False)
 
     reanimateShip :: AngPosition -> [SFObject]
     reanimateShip ap' = [movingShip g'' (newShip ap')]
@@ -411,10 +459,6 @@ movingShip g s = proc ev -> do
                          vel = vector2 (vel' * sin angle') (vel' * cos angle'),
                          life = life', done = NoEvent, spawn = NoEvent } )
 
-    reanimateToUnit :: Event GameEvent -> Event ()
-    reanimateToUnit (Event Reanimate) = Event ()
-    reanimateToUnit _                 = NoEvent
-
 playingGame :: RandomGen g => g -> Object -> SFObject
 playingGame g gm = proc ev -> do
     score' <- accumHoldBy accumScore 0 -< ev
@@ -433,7 +477,7 @@ playingGame g gm = proc ev -> do
 
     accumRounds :: Int -> GameEvent -> Int
     accumRounds start GameChange {newRound = rc} | rc == True = start + 1
-    accumRounds start _          = start
+    accumRounds start _                                       = start
 
 -- | Construct a list of moving game objects from a list of initial configurations.
 movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event GameEvent) (IL Object)
@@ -486,7 +530,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
       where
         obj = fromJust $ lookupIL k objs
 
-    safeDistance = 0.13
+    safeDistance = 0.10
     safeZone = [(0.5 - safeDistance, 0.5 - safeDistance),
                 (0.5 - safeDistance, 0.5 + safeDistance),
                 (0.5 + safeDistance, 0.5 + safeDistance),
@@ -510,15 +554,13 @@ route (keyEv,objs) sfs = mapIL route' sfs
     roundComplete = length asteroidHits == length asteroids
     scoreChanged' = sum $ map getAsteroidValue asteroidHits
     shipDestroyed' = length shipHits /= 0
-    allAsteroidsDestroyed = (length asteroids - length asteroidHits) == 0
 
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
     route' (k,sfObj) | isJust game' && game' == Just k = routeGame (k,sfObj)
     route' (k,sfObj) | isJust ship' && ship' == Just k = routeShip (k,sfObj)
-    route' (k,sfObj) | isJust asteroid' && asteroid' == Just k = routeAsteroid (k,sfObj)
-    route' (k,sfObj) = if k `elem` allHits
-                       then (Event Destroyed, sfObj)
-                       else (NoEvent, sfObj)
+    route' (k,sfObj) | isJust asteroid' && asteroid' == Just k =
+                       routeAsteroid (k,sfObj)
+    route' (k,sfObj) = routeRest (k,sfObj)
 
     routeShip :: (ILKey, sf) -> (Event GameEvent, sf)
     routeShip (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
@@ -526,15 +568,14 @@ route (keyEv,objs) sfs = mapIL route' sfs
                              (lives gameObj) > 0
                           then (Event Reanimate, sfObj)
                           else (NoEvent, sfObj)
-    routeShip (k,sfObj) = if k `elem` allHits
-                          then (Event Destroyed, sfObj)
-                          else (keyEv, sfObj)
+    routeShip (k,sfObj) = routeRest (k,sfObj)
 
     routeAsteroid :: (ILKey, sf) -> (Event GameEvent, sf)
-    routeAsteroid (_,sfObj) | allAsteroidsDestroyed = (Event Reanimate, sfObj)
-    routeAsteroid (k,sfObj) = if k `elem` allHits
-                              then (Event Destroyed, sfObj)
-                              else (keyEv, sfObj)
+    routeAsteroid (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
+                              (Event Reanimate, sfObj)
+    routeAsteroid (_,sfObj') = if roundComplete
+                                then (Event DestroyedLast, sfObj')
+                                else (NoEvent, sfObj')
 
     routeGame :: (ILKey, sf) -> (Event GameEvent, sf)
     routeGame (_,sfObj) =
@@ -543,6 +584,11 @@ route (keyEv,objs) sfs = mapIL route' sfs
         else (Event (GameChange {scoreChanged = scoreChanged',
                                  shipDestroyed = shipDestroyed',
                                  newRound = roundComplete}), sfObj)
+
+    routeRest :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeRest (k',sfObj') = if k' `elem` allHits
+                            then (Event Destroyed, sfObj')
+                            else (keyEv, sfObj')
 
 killOrSpawn :: ((Event GameEvent, IL Object) , IL Object) -> Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
@@ -658,6 +704,93 @@ renderPolygons :: [Polygon] -> Canvas ()
 renderPolygons p = do
     mapM_ renderPolygonStroke p
 
+renderShip :: Object -> Canvas ()
+renderShip s = do
+    save ()
+    translate(vector2X (pos s), vector2Y (pos s))
+    rotate (angPos s)
+    renderPolygon (poly s)
+    lineWidth 0.002
+    strokeStyle "white"
+    stroke()
+    if (thrusting s) && not (null (poly s)) then do
+        renderPolygon thrustPolygon
+        stroke()
+    else lineWidth 0.002
+    restore ()
+
+renderAsteroid :: Object -> Canvas ()
+renderAsteroid a = do
+    save ()
+    translate(vector2X (pos a), vector2Y (pos a))
+    rotate (angPos a)
+    renderPolygon (poly a)
+    lineWidth 0.002
+    strokeStyle "white"
+    stroke()
+    restore ()
+
+renderMissile :: Object -> Canvas ()
+renderMissile m = do
+    save ()
+    translate(vector2X (pos m), vector2Y (pos m))
+    renderPolygon (poly m)
+    lineWidth 0.002
+    strokeStyle "white"
+    stroke()
+    restore ()
+
+renderDebris :: Object -> Canvas ()
+renderDebris d = do
+    save ()
+    translate(vector2X (pos d), vector2Y (pos d))
+    renderPolygon (poly d)
+    lineWidth 0.001
+    strokeStyle "white"
+    stroke()
+    restore ()
+
+renderGame :: Object -> Canvas ()
+renderGame g = do
+    save ()
+    renderPolygons (placedScorePolygons ++ placedLifePolygons)
+    lineWidth 0.001
+    strokeStyle "white"
+    stroke()
+    restore ()
+  where
+    placedLifePolygons :: [Polygon]
+    placedLifePolygons = map translatePolyPair (zip shipPositions lifePolygons)
+    placedScorePolygons :: [Polygon]
+    placedScorePolygons = map translatePolyPair (zip digitPositions scorePolygons)
+    translatePolyPair :: (Point, Polygon) -> Polygon
+    translatePolyPair (pt,pol) = translatePoly pt pol
+    lifePolygons :: [Polygon]
+    lifePolygons = take (lives g) (repeat shipPolygon)
+    scorePolygons :: [Polygon]
+    scorePolygons = map digToPolygon (reverse $ digs (score g))
+    digToPolygon :: Int -> Polygon
+    digToPolygon d = digitPolygons !! d
+    digs :: Int -> [Int]
+    digs n = map digitToInt $ show n
+    digitPositions :: [Point]
+    digitPositions = zip [0.220,0.180..0.020] (take 6 $ repeat 0.950)
+    shipPositions :: [Point]
+    shipPositions =  zip [0.220,0.200..0.120] (take 6 $ repeat 0.890)
+
+renderObject :: Object -> Canvas ()
+renderObject obj = case obj of
+    Asteroid _ _ _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
+    Ship     _ _ _ _ _ _ _ _ _ _   -> renderShip obj
+    Missile  _ _ _ _ _             -> renderMissile obj
+    Debris   _ _ _ _ _ _           -> renderDebris obj
+    Game     _ _ _ _ _             -> renderGame obj
+
+renderObjects :: [Object] -> Canvas ()
+renderObjects = mapM_ renderObject
+
+---------------------------------------------------
+
 asteroid1 :: Polygon
 asteroid1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
                 ( 0.016,-0.060),( 0.062,-0.030),( 0.064,-0.014),
@@ -749,88 +882,3 @@ digitPolygons = [digitZeroPolygon, digitOnePolygon, digitTwoPolygon,
                   digitThreePolygon, digitFourPolygon, digitFivePolygon,
                   digitSixPolygon, digitSevenPolygon, digitEightPolygon,
                   digitNinePolygon]
-
-renderShip :: Object -> Canvas ()
-renderShip s = do
-    save ()
-    translate(vector2X (pos s), vector2Y (pos s))
-    rotate (angPos s)
-    renderPolygon (poly s)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
-    if (thrusting s) then do
-        renderPolygon thrustPolygon
-        stroke()
-    else lineWidth 0.002
-    restore ()
-
-renderAsteroid :: Object -> Canvas ()
-renderAsteroid a = do
-    save ()
-    translate(vector2X (pos a), vector2Y (pos a))
-    rotate (angPos a)
-    renderPolygon (poly a)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
-    restore ()
-
-renderMissile :: Object -> Canvas ()
-renderMissile m = do
-    save ()
-    translate(vector2X (pos m), vector2Y (pos m))
-    renderPolygon (poly m)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
-    restore ()
-
-renderDebris :: Object -> Canvas ()
-renderDebris d = do
-    save ()
-    translate(vector2X (pos d), vector2Y (pos d))
-    renderPolygon (poly d)
-    lineWidth 0.001
-    strokeStyle "white"
-    stroke()
-    restore ()
-
-renderGame :: Object -> Canvas ()
-renderGame g = do
-    save ()
-    renderPolygons (placedScorePolygons ++ placedLifePolygons)
-    lineWidth 0.001
-    strokeStyle "white"
-    stroke()
-    restore ()
-  where
-    placedLifePolygons :: [Polygon]
-    placedLifePolygons = map translatePolyPair (zip shipPositions lifePolygons)
-    placedScorePolygons :: [Polygon]
-    placedScorePolygons = map translatePolyPair (zip digitPositions scorePolygons)
-    translatePolyPair :: (Point, Polygon) -> Polygon
-    translatePolyPair (pt,pol) = translatePoly pt pol
-    lifePolygons :: [Polygon]
-    lifePolygons = take (lives g) (repeat shipPolygon)
-    scorePolygons :: [Polygon]
-    scorePolygons = map digToPolygon (reverse $ digs (score g))
-    digToPolygon :: Int -> Polygon
-    digToPolygon d = digitPolygons !! d
-    digs :: Int -> [Int]
-    digs n = map digitToInt $ show n
-    digitPositions :: [Point]
-    digitPositions = zip [0.220,0.180..0.020] (take 6 $ repeat 0.950)
-    shipPositions :: [Point]
-    shipPositions =  zip [0.220,0.200..0.120] (take 6 $ repeat 0.890)
-
-renderObject :: Object -> Canvas ()
-renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ _   -> renderAsteroid obj
-    Ship     _ _ _ _ _ _ _ _ _ _ -> renderShip obj
-    Missile  _ _ _ _ _           -> renderMissile obj
-    Debris   _ _ _ _ _ _         -> renderDebris obj
-    Game     _ _ _ _ _           -> renderGame obj
-
-renderObjects :: [Object] -> Canvas ()
-renderObjects = mapM_ renderObject
