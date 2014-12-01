@@ -47,6 +47,8 @@ data Object = Asteroid { poly   :: Polygon,
                          radius :: Double,
                          thrusting :: Bool,
                          done   :: Event (),
+                         reqReanimate :: Bool,
+                         reanimate :: Event(),
                          spawn  :: Event [SFObject]
                        }
             | Missile  { poly   :: Polygon,
@@ -78,8 +80,8 @@ isGame obj = case obj of
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ _ -> True
-    _                    -> False
+    Ship _ _ _ _ _ _ _ _ _ _ -> True
+    _                        -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
@@ -191,7 +193,8 @@ theShip :: Object
 theShip = Ship {poly = shipPolygon,
                 pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                 angPos = 0.0, radius = 0.016, thrusting = False,
-                done = NoEvent, spawn = NoEvent }
+                done = NoEvent, reqReanimate = False,
+                reanimate = NoEvent, spawn = NoEvent }
 
 theGame :: Object
 theGame = Game {score = 0, lives = 3, theRound = 1,
@@ -221,6 +224,7 @@ data GameEvent = TurnLeft |
                  Fire |
                  Hyperspace |
                  Destroyed |
+                 Reanimate |
                  GameChange { scoreChanged :: Int,
                               shipDestroyed :: Bool,
                               newRound :: Bool }
@@ -247,6 +251,7 @@ handleKeyEvents blankEvent = do
                     Just a | a == rightKey -> Event TurnRight
                            | a == leftKey  -> Event TurnLeft
                            | a == upKey    -> Event Thruster
+                           | a == downKey  -> Event Hyperspace
                            | a == spaceKey -> Event Fire
                            | otherwise     -> NoEvent
                     Nothing                -> NoEvent
@@ -318,26 +323,47 @@ movingDebris d = proc _ -> do
 movingShip :: RandomGen g => g -> Object -> SFObject
 movingShip g s = proc ev -> do
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
-    fire <- arr fireCannon -< ev
+    fire <- arr fireCannon -< ev -- ToDo: Limit ship fire rate
+    destroyed' <- accumHoldBy occured False -< ev
+    reqReanimate' <- accumHoldBy occured False <<< delayEvent 5.0 -< ev
     rec
         accel <- arr calcAccel -< (ev, angPos', vel')
         vel' <- integral -< accel
     pos' <- wrapObject (radius s) <<< ((pos s) ^+^) ^<< integral -< vel'
-    returnA -< s { pos = pos', vel = vel', angPos = angPos',
+    returnA -< s { poly = if (destroyed') then [] else shipPolygon,
+                   pos = pos', vel = vel', angPos = angPos',
                    thrusting = ((vector2Rho accel) > 0.1),
-                   done = destroyedToUnit ev,
-                   spawn = (mergeBy (++)) (fire `tag` (addMissile pos' angPos'))
-                           (destroyedToUnit ev `tag` (evalRand (newDebris pos') g)) }
+                   done = reanimateToUnit ev, reqReanimate = reqReanimate',
+                   spawn = foldl (mergeBy (++)) NoEvent
+                        [(fire `tag` (addMissile pos' angPos')),
+                         (destroyedToUnit ev `tag` (evalRand (newDebris pos') g')),
+                         (reanimateToUnit ev `tag` (reanimateShip angPos'))] }
   where
-    addMissile :: Position -> AngPosition -> [SFObject]
-    addMissile p' ap' = [movingMissile $ launchMissile p' ap']
+    (g', g'') = split g
 
-    launchMissile :: Position -> AngPosition -> Object
-    launchMissile p' ap' = Missile { poly = missilePolygon,
-                                     pos = p', --ToDo caculate ship tip pos
-                                     vel = vector2 (-missileVel * sin ap')
-                                                   ( missileVel * cos ap'),
-                                     done = NoEvent, spawn  = NoEvent }
+    occured :: Bool -> GameEvent -> Bool
+    occured init Destroyed = True
+    occured init _         = init
+
+    addMissile :: Position -> AngPosition -> [SFObject]
+    addMissile p' ap' = [movingMissile $ newMissile p' ap']
+
+    newMissile :: Position -> AngPosition -> Object
+    newMissile p' ap' = Missile { poly = missilePolygon,
+                                  pos = p', -- ToDo: caculate ship tip pos
+                                  vel = vector2 (-missileVel * sin ap')
+                                                ( missileVel * cos ap'),
+                                  done = NoEvent, spawn  = NoEvent }
+
+    reanimateShip :: AngPosition -> [SFObject]
+    reanimateShip ap' = [movingShip g'' (newShip ap')]
+
+    newShip :: AngPosition -> Object
+    newShip ap'' = Ship {poly = shipPolygon,
+                         pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
+                         angPos = ap'', radius = 0.016, thrusting = False,
+                         done = NoEvent, reqReanimate = False,
+                         reanimate = NoEvent, spawn = NoEvent }
 
     accumAngPos :: Double -> GameEvent -> Double
     accumAngPos start TurnRight = start - (pi / 8)
@@ -373,11 +399,16 @@ movingShip g s = proc ev -> do
                          vel = vector2 (vel' * sin angle') (vel' * cos angle'),
                          life = life', done = NoEvent, spawn = NoEvent } )
 
+    reanimateToUnit :: Event GameEvent -> Event ()
+    reanimateToUnit (Event Reanimate) = Event ()
+    reanimateToUnit _                 = NoEvent
+
 playingGame :: RandomGen g => g -> Object -> SFObject
 playingGame g gm = proc ev -> do
     score' <- accumHoldBy accumScore 0 -< ev
     lives' <- accumHoldBy accumLives 3 -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
+    gameOver <- edge -< lives' <= 0
     returnA -< gm { score = score', lives = lives', theRound = round' }
   where
     accumScore :: Int -> GameEvent -> Int
@@ -408,9 +439,12 @@ route (keyEv,objs) sfs = mapIL route' sfs
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
---    game' = fst $ head $ assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
+    ship' = if null ships then Nothing else Just (fst $ head ships)
+    shipObj = if null ships then Nothing else lookupIL (fromJust ship') objs
+    asteroid' = if null asteroids then Nothing else Just (fst $ head asteroids)
     game' = if null games then Nothing else Just (fst $ head games)
+
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     sAsHits ((sk, so):[]) ((ak,ao):rest) =
       if polygonInPolygon sPolygon aPolygon
@@ -420,6 +454,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
           sPolygon = transformPoly (angPos so) (pos2Point (pos so)) (poly so)
           aPolygon = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
     sAsHits _        _              = []
+
     mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     mAsHits _        []             = []
     mAsHits (mk, mo) ((ak,ao):rest) =
@@ -428,9 +463,16 @@ route (keyEv,objs) sfs = mapIL route' sfs
       else mAsHits (mk, mo) rest
         where
           polygon' = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
+
     msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey, ILKey)]
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
+
+    getAsteroidValue :: ILKey -> Int
+    getAsteroidValue k = asteroidValues !! (gen obj)
+      where
+        obj = fromJust $ lookupIL k objs
+
     (missileHits, asteroidMissileHits) = unzip $ msAsHits missiles asteroids
     (shipHits, asteroidShipHits) = unzip $ sAsHits ships asteroids
     asteroidHits = nub $ asteroidMissileHits ++ asteroidShipHits
@@ -440,17 +482,23 @@ route (keyEv,objs) sfs = mapIL route' sfs
     roundComplete = length asteroidHits == length asteroids
     scoreChanged' = sum $ map getAsteroidValue asteroidHits
     shipDestroyed' = length shipHits /= 0
-    getAsteroidValue :: ILKey -> Int
-    getAsteroidValue k = asteroidValues !! (gen obj)
-      where
-        obj = fromJust $ lookupIL k objs
+
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
-    route' (k,sfObj) | isJust game' && game' == Just k = routeGame' (k,sfObj)
-    route' (k,sfObj) = if (trace ("other " ++ show k) k) `elem` allHits
-                            then (Event Destroyed, sfObj)
-                            else (keyEv, sfObj)
-    routeGame' :: (ILKey, sf) -> (Event GameEvent, sf)
-    routeGame' (_,sfObj) =
+    route' (k,sfObj) | isJust game' && game' == Just k = routeGame (k,sfObj)
+    route' (k,sfObj) | isJust ship' && ship' == Just k = routeShip (k,sfObj)
+    route' (k,sfObj) = if k `elem` allHits
+                       then (Event Destroyed, sfObj)
+                       else (NoEvent, sfObj)
+
+    routeShip :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeShip (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
+                          (Event Reanimate, sfObj)
+    routeShip (k,sfObj) = if k `elem` allHits
+                          then (Event Destroyed, sfObj)
+                          else (keyEv, sfObj)
+
+    routeGame :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeGame (_,sfObj) =
         if scoreChanged' == 0 && (not shipDestroyed') && (not roundComplete)
         then (NoEvent, sfObj)
         else (Event (GameChange {scoreChanged = scoreChanged',
@@ -486,6 +534,8 @@ pos2Point :: Position -> Point
 pos2Point p = (vector2X p, vector2Y p)
 
 polyEdges :: Polygon -> [Edge]
+polyEdges []      = []
+polyEdges [_]     = []
 polyEdges polygon = zip polygon (tail polygon ++ [head polygon])
 
 rotatePoly :: AngPosition -> Polygon -> Polygon
@@ -512,12 +562,11 @@ scalePoly scaleFactor polygon = map scalePoint polygon
     scalePoint p = (scaleFactor * fst p, scaleFactor * snd p)
 
 pointInPolygon :: Point -> Polygon -> Bool
-pointInPolygon point polygon = foldr acumNode False edges
+pointInPolygon point polygon = foldr acumNode False (polyEdges polygon)
   where
     px = fst point
     py = snd point
-    edges :: [Edge]
-    edges = polyEdges $ tail polygon
+
     acumNode :: Edge -> Bool -> Bool
     acumNode ed b = ((polY1 < py && polY2 >= py ||
                       polY2 < py && polY1 >= py) &&
@@ -553,7 +602,8 @@ scaleScene = do
     scale (w, negate h)
 
 renderPolygon :: Polygon -> Canvas ()
-renderPolygon p = do
+renderPolygon [] = return ()
+renderPolygon p  = do
     beginPath ()
     moveTo (head p)
     mapM_ lineTo (tail p)
@@ -737,11 +787,11 @@ renderGame g = do
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship     _ _ _ _ _ _ _ _   -> renderShip obj
-    Missile  _ _ _ _ _         -> renderMissile obj
-    Debris   _ _ _ _ _ _       -> renderDebris obj
-    Game     _ _ _ _ _         -> renderGame obj
+    Asteroid _ _ _ _ _ _ _ _ _   -> renderAsteroid obj
+    Ship     _ _ _ _ _ _ _ _ _ _ -> renderShip obj
+    Missile  _ _ _ _ _           -> renderMissile obj
+    Debris   _ _ _ _ _ _         -> renderDebris obj
+    Game     _ _ _ _ _           -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
