@@ -97,6 +97,8 @@ initAsterVel  :: Double
 initAsterVel  = 0.1
 initAsterNum  :: Int
 initAsterNum  = 4
+newAsterNum   :: Int
+newAsterNum   = 6
 centerMinEdge :: Double
 centerMinEdge = 0.4
 centerMaxEdge :: Double
@@ -183,11 +185,11 @@ newAsteroids p currgen = do
                        done = NoEvent, spawn = Event [],
                        poly = scalePoly sizeScale (asterPolygons !! asterIndex)}
 
-initAsteroids :: RandomGen g => Rand g [Object]
-initAsteroids = replicateM initAsterNum initAsteroid
+initAsteroids :: RandomGen g => Int -> Rand g [Object]
+initAsteroids count = replicateM count initAsteroid
 
 genInitialAsteroids :: RandomGen g => g -> [Object]
-genInitialAsteroids g = evalRand initAsteroids g
+genInitialAsteroids g = evalRand (initAsteroids initAsterNum) g
 
 theShip :: Object
 theShip = Ship {poly = shipPolygon,
@@ -281,17 +283,27 @@ movingAsteroid g a = proc ev -> do
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
     returnA -< a { pos = pos', angPos = angPos',
-                   done = destroyedToUnit ev,
-                   spawn = destroyedToUnit ev `tag` newObjects a pos' }
+                   done = fst $ destOrReanToUnit ev,
+                   spawn = fst (destOrReanToUnit ev) `tag`
+                           newObjects (snd (destOrReanToUnit ev)) a pos' }
   where
     (g1, g2) = split g
     (g3, g4) = split g1
 
-    newObjects :: Object -> Position -> [SFObject]
-    newObjects a' p = evalRand (newDebris p) g2 ++
-                     if gen a' <= 1
-                     then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a')) g4)
-                     else []
+    destOrReanToUnit :: Event GameEvent -> (Event (), Bool)
+    destOrReanToUnit (Event Destroyed) = (Event (), False)
+    destOrReanToUnit (Event Reanimate) = (Event (), True)
+    destOrReanToUnit _                 = (NoEvent, False)
+
+    newObjects :: Bool -> Object -> Position -> [SFObject]
+    newObjects True a' p =
+        evalRand (newDebris p) g2 ++
+        movingRandomAsteroids g3 (evalRand (initAsteroids newAsterNum) g4)
+    newObjects False a' p =
+        evalRand (newDebris p) g2 ++
+        if gen a' <= 1
+        then movingRandomAsteroids g3 (evalRand (newAsteroids p (gen a')) g4)
+        else []
 
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
     newDebris p = do
