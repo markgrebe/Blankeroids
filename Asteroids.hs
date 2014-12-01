@@ -359,10 +359,14 @@ movingDebris d = proc _ -> do
 movingShip :: RandomGen g => g -> Object -> SFObject
 movingShip g s = proc ev -> do
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
-    trigger <- arr fireCannon -< ev
-    (_, fire) <- magazine 4 4.5 -< trigger
-    destroyed' <- accumHoldBy destroyedOccured False -< ev
-    reqReanimate' <- accumHoldBy destroyedOccured False <<< delayEvent 5.0 -< ev
+    trigger' <- arr fireCannon -< ev
+    (_, fire) <- magazine 4 4.5 -< trigger'
+    (destroyed', hyperspace') <-
+            accumHoldBy destroyHyperOccured (False, False) -< ev
+    reqReanimate' <-
+            accumHoldBy destroyOccured False <<< delayEvent 4.0 -< ev
+    reqHyperEnd <-
+            accumHoldBy hyperOccured False <<< delayEvent 1.0 -< ev
     rec
         accel <- arr calcAccel -< (ev, angPos', vel')
         vel' <- integral -< accel
@@ -370,17 +374,27 @@ movingShip g s = proc ev -> do
     returnA -< s { poly = if (destroyed') then [] else shipPolygon,
                    pos = pos', vel = vel', angPos = angPos',
                    thrusting = ((vector2Rho accel) > 0.1),
-                   done = reanimateToUnit ev, reqReanimate = reqReanimate',
+                   done = reanimateToUnit ev,
+                   reqReanimate = reqReanimate' || reqHyperEnd,
                    spawn = foldl (mergeBy (++)) NoEvent
                         [(fire `tag` (addMissile pos' angPos')),
                          (destroyedToUnit ev `tag` (evalRand (newDebris pos') g')),
-                         (reanimateToUnit ev `tag` (reanimateShip angPos'))] }
+                         (reanimateToUnit ev `tag` (reanimateShip angPos' hyperspace'))] }
   where
     (g', g'') = split g
 
-    destroyedOccured :: Bool -> GameEvent -> Bool
-    destroyedOccured _       Destroyed = True
-    destroyedOccured initial _         = initial
+    destroyHyperOccured :: (Bool, Bool) -> GameEvent -> (Bool, Bool)
+    destroyHyperOccured _       Destroyed  = (True, False)
+    destroyHyperOccured _       Hyperspace = (True, True)
+    destroyHyperOccured initial _          = initial
+
+    destroyOccured :: Bool -> GameEvent -> Bool
+    destroyOccured _       Destroyed  = True
+    destroyOccured initial _          = initial
+
+    hyperOccured :: Bool -> GameEvent -> Bool
+    hyperOccured _       Hyperspace  = True
+    hyperOccured initial _           = initial
 
     addMissile :: Position -> AngPosition -> [SFObject]
     addMissile p' ap' = [movingMissile $ newMissile p' ap']
@@ -402,11 +416,11 @@ movingShip g s = proc ev -> do
     -- Reused from Yampa Space Invaders Example
     -- Copyright (c) Yale University, 2003
     magazine :: Int -> Double -> SF (Event ()) (Int, Event ())
-    magazine n f = proc trigger -> do
+    magazine n f = proc trigger' -> do
       reload <- repeatedly (1/f) () -< ()
-      (level,canFire) <- accumHold (n,True) -< (trigger `tag` dec)
+      (level,canFire) <- accumHold (n,True) -< (trigger' `tag` dec)
                                                 `lMerge` (reload `tag` inc)
-      returnA -< (level, trigger `gate` canFire)
+      returnA -< (level, trigger' `gate` canFire)
       where
         inc :: (Int,Bool) -> (Int, Bool)
         inc (l,_) | l < n = (l + 1, l > 0)
@@ -415,15 +429,25 @@ movingShip g s = proc ev -> do
         dec (l,_) | l > 0 = (l - 1, True)
                   | otherwise = (l, False)
 
-    reanimateShip :: AngPosition -> [SFObject]
-    reanimateShip ap' = [movingShip g'' (newShip ap')]
+    reanimateShip :: AngPosition -> Bool-> [SFObject]
+    reanimateShip ap' h' = [movingShip g'' (newShip ap' h')]
 
-    newShip :: AngPosition -> Object
-    newShip ap'' = Ship {poly = shipPolygon,
-                         pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
+    randomPosition :: RandomGen g => Rand g Position
+    randomPosition = do
+        x <- getRandomR(0.1,0.9)
+        y <- getRandomR(0.1,0.9)
+        return (vector2 x y)
+
+    newShip :: AngPosition -> Bool -> Object
+    newShip ap'' h'' = Ship {poly = shipPolygon,
+                         pos = startPos, vel = vector2 0.0 0.0,
                          angPos = ap'', radius = 0.016, thrusting = False,
                          done = NoEvent, reqReanimate = False,
                          reanimate = NoEvent, spawn = NoEvent }
+      where
+        startPos = if h''
+                   then evalRand randomPosition g'
+                   else vector2 0.5 0.5
 
     accumAngPos :: Double -> GameEvent -> Double
     accumAngPos start TurnRight = start - (pi / 8)
@@ -459,9 +483,10 @@ movingShip g s = proc ev -> do
                          vel = vector2 (vel' * sin angle') (vel' * cos angle'),
                          life = life', done = NoEvent, spawn = NoEvent } )
 
-playingGame :: RandomGen g => g -> Object -> SFObject
-playingGame g gm = proc ev -> do
+playingGame :: Object -> SFObject
+playingGame gm = proc ev -> do
     score' <- accumHoldBy accumScore 0 -< ev
+    -- ToDo: Bonus lives
     lives' <- accumHoldBy accumLives 3 -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
     gameOver <- edge -< lives' <= 0
@@ -484,10 +509,9 @@ movingObjects :: RandomGen g => g -> [Object] -> Object -> Object -> SF (Event G
 movingObjects g as ship gm = playGame (listToIL ([gameSF, shipSF] ++ aSFs))
   where
     (g1, g2) = split g
-    (g3, g4) = split g1
-    aSFs = movingRandomAsteroids g2 as
-    shipSF = movingShip g3 ship
-    gameSF = playingGame g4 gm
+    aSFs = movingRandomAsteroids g1 as
+    shipSF = movingShip g2 ship
+    gameSF = playingGame gm
 
 route :: (Event GameEvent, IL Object) -> IL sf -> IL (Event GameEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
@@ -563,7 +587,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
     route' (k,sfObj) = routeRest (k,sfObj)
 
     routeShip :: (ILKey, sf) -> (Event GameEvent, sf)
-    routeShip (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
+    routeShip (_,sfObj) | reqReanimate $ fromJust shipObj =
                           if safeToReanimate asteroids &&
                              (lives gameObj) > 0
                           then (Event Reanimate, sfObj)
