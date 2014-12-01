@@ -498,10 +498,12 @@ route (keyEv,objs) sfs = mapIL route' sfs
     roundComplete = length asteroidHits == length asteroids
     scoreChanged' = sum $ map getAsteroidValue asteroidHits
     shipDestroyed' = length shipHits /= 0
+    allAsteroidsDestroyed = (length asteroids - length asteroidHits) == 0
 
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
     route' (k,sfObj) | isJust game' && game' == Just k = routeGame (k,sfObj)
     route' (k,sfObj) | isJust ship' && ship' == Just k = routeShip (k,sfObj)
+    route' (k,sfObj) | isJust asteroid' && asteroid' == Just k = routeAsteroid (k,sfObj)
     route' (k,sfObj) = if k `elem` allHits
                        then (Event Destroyed, sfObj)
                        else (NoEvent, sfObj)
@@ -515,6 +517,12 @@ route (keyEv,objs) sfs = mapIL route' sfs
     routeShip (k,sfObj) = if k `elem` allHits
                           then (Event Destroyed, sfObj)
                           else (keyEv, sfObj)
+
+    routeAsteroid :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeAsteroid (_,sfObj) | allAsteroidsDestroyed = (Event Reanimate, sfObj)
+    routeAsteroid (k,sfObj) = if k `elem` allHits
+                              then (Event Destroyed, sfObj)
+                              else (keyEv, sfObj)
 
     routeGame :: (ILKey, sf) -> (Event GameEvent, sf)
     routeGame (_,sfObj) =
