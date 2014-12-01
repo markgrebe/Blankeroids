@@ -444,6 +444,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
     shipObj = if null ships then Nothing else lookupIL (fromJust ship') objs
     asteroid' = if null asteroids then Nothing else Just (fst $ head asteroids)
     game' = if null games then Nothing else Just (fst $ head games)
+    gameObj = fromJust $ lookupIL (fromJust game') objs
 
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     sAsHits ((sk, so):[]) ((ak,ao):rest) =
@@ -473,6 +474,21 @@ route (keyEv,objs) sfs = mapIL route' sfs
       where
         obj = fromJust $ lookupIL k objs
 
+    safeDistance = 0.13
+    safeZone = [(0.5 - safeDistance, 0.5 - safeDistance),
+                (0.5 - safeDistance, 0.5 + safeDistance),
+                (0.5 + safeDistance, 0.5 + safeDistance),
+                (0.5 + safeDistance, 0.5 - safeDistance),
+                (0.5 - safeDistance, 0.5 - safeDistance)]
+    safeToReanimate :: [(ILKey, Object)] -> Bool
+    safeToReanimate []             = True
+    safeToReanimate ((_,ao):rest) =
+      if polygonInPolygon polygon' safeZone
+      then False
+      else safeToReanimate rest
+        where
+          polygon' = transformPoly (angPos ao) (pos2Point (pos ao)) (poly ao)
+
     (missileHits, asteroidMissileHits) = unzip $ msAsHits missiles asteroids
     (shipHits, asteroidShipHits) = unzip $ sAsHits ships asteroids
     asteroidHits = nub $ asteroidMissileHits ++ asteroidShipHits
@@ -492,7 +508,10 @@ route (keyEv,objs) sfs = mapIL route' sfs
 
     routeShip :: (ILKey, sf) -> (Event GameEvent, sf)
     routeShip (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
-                          (Event Reanimate, sfObj)
+                          if safeToReanimate asteroids &&
+                             (lives gameObj) > 0
+                          then (Event Reanimate, sfObj)
+                          else (NoEvent, sfObj)
     routeShip (k,sfObj) = if k `elem` allHits
                           then (Event Destroyed, sfObj)
                           else (keyEv, sfObj)
