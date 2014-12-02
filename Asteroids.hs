@@ -18,7 +18,7 @@ import Control.Monad.Random
 
 import IdentityList
 
--- import Debug.Trace
+import Debug.Trace
 -- import Debug.Hood.Observe
 
 ---------------------------------------------------
@@ -69,6 +69,7 @@ data Object = Asteroid { poly   :: Polygon,
             | Game     { score  :: Int,
                          lives  :: Int,
                          theRound  :: Int,
+                         gameOver :: Bool,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -77,8 +78,8 @@ type SFObject = SF (Event GameEvent) Object
 
 isGame :: Object -> Bool
 isGame obj = case obj of
-    Game _ _ _ _ _ -> True
-    _              -> False
+    Game _ _ _ _ _ _ -> True
+    _                -> False
 
 isShip :: Object -> Bool
 isShip obj = case obj of
@@ -204,7 +205,7 @@ theShip = Ship {poly = shipPolygon,
                 reanimate = NoEvent, spawn = NoEvent }
 
 theGame :: Object
-theGame = Game {score = 0, lives = 3, theRound = 1,
+theGame = Game {score = 0, lives = 3, theRound = 1, gameOver = False,
                 done = NoEvent, spawn = NoEvent }
 
 ---------------------------------------------------
@@ -489,8 +490,9 @@ playingGame gm = proc ev -> do
     -- ToDo: Bonus lives
     lives' <- accumHoldBy accumLives 3 -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
-    gameOver <- edge -< lives' <= 0
-    returnA -< gm { score = score', lives = lives', theRound = round' }
+    gameOver' <- hold False <<< edgeTag True -< lives' <= 0
+    returnA -< gm { score = score', lives = lives', theRound = round',
+                    gameOver = gameOver' }
   where
     accumScore :: Int -> GameEvent -> Int
     accumScore start GameChange { scoreChanged = s} = start + s
@@ -781,6 +783,11 @@ renderGame g = do
     lineWidth 0.001
     strokeStyle "white"
     stroke()
+    if gameOver g then do
+       renderPolygon junkPolygon
+       stroke()
+    else
+       lineWidth 0.002
     restore ()
   where
     placedLifePolygons :: [Polygon]
@@ -808,7 +815,7 @@ renderObject obj = case obj of
     Ship     _ _ _ _ _ _ _ _ _ _   -> renderShip obj
     Missile  _ _ _ _ _             -> renderMissile obj
     Debris   _ _ _ _ _ _           -> renderDebris obj
-    Game     _ _ _ _ _             -> renderGame obj
+    Game     _ _ _ _ _ _           -> renderGame obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
@@ -845,6 +852,9 @@ shipPolygon = [( -0.008,-0.016),(0.000,0.016),(0.008,-0.016),
 thrustPolygon :: Polygon
 thrustPolygon = [(0.000,-0.012),(0.006,-0.018),(0.000,-0.024),
                 ( -0.006,-0.018),(0.000,-0.012)]
+
+junkPolygon :: Polygon
+junkPolygon = [(0.1,0.1),(0.1,0.8),(0.8,0.8),(0.8,0.1),(0.1,0.1)]
 
 missilePolygon :: Polygon
 missilePolygon = [( -0.001,-0.001),(-0.001, 0.001),(0.001, 0.001),
