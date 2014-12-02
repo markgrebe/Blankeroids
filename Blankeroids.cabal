@@ -15,7 +15,7 @@ build-type:          Simple
 -- extra-source-files:
 cabal-version:       >=1.10
 
-executable Asteroids
+executable Blankeroids
   main-is:             Blankeroids.hs
   -- other-modules:
   -- other-extensions:
