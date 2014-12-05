@@ -33,7 +33,6 @@ module IdentityList (
     mapFindAllIL  -- :: ((ILKey, a) -> Maybe b) -> IL a -> [b]
 ) where
 
-import Data.List (find)
 
 
 ------------------------------------------------------------------------------
@@ -105,9 +104,9 @@ deleteIL k (IL {ilNextKey = nk, ilAssocs = kas}) =
     IL {ilNextKey = nk, ilAssocs = deleteHlp kas}
     where
 	deleteHlp []                                   = []
-        deleteHlp kakas@(ka@(k', _) : kas) | k > k'    = kakas
-					   | k == k'   = kas
-                                           | otherwise = ka : deleteHlp kas
+        deleteHlp kakas@(ka@(k', _) : kas') | k > k'    = kakas
+					   | k == k'   = kas'
+                                           | otherwise = ka : deleteHlp kas'
 
 
 ------------------------------------------------------------------------------
@@ -148,15 +147,15 @@ findIL :: ((ILKey, a) -> Bool) -> IL a -> Maybe a
 findIL p (IL {ilAssocs = kas}) = findHlp kas
     where
 	findHlp []                = Nothing
-        findHlp (ka@(_, a) : kas) = if p ka then Just a else findHlp kas
+        findHlp (ka@(_, a) : kas') = if p ka then Just a else findHlp kas'
 
 
 mapFindIL :: ((ILKey, a) -> Maybe b) -> IL a -> Maybe b
 mapFindIL p (IL {ilAssocs = kas}) = mapFindHlp kas
     where
 	mapFindHlp []         = Nothing
-        mapFindHlp (ka : kas) = case p ka of
-				    Nothing     -> mapFindHlp kas
+        mapFindHlp (ka : kas') = case p ka of
+				    Nothing     -> mapFindHlp kas'
 				    jb@(Just _) -> jb
 
 
