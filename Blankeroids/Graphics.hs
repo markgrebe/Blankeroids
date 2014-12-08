@@ -51,10 +51,11 @@ renderPolygons lwidth p = do
 renderShip :: Object -> Canvas ()
 renderShip s = do
     renderPolygon normalObjectWidth (poly s)
-    if (thrusting s) && not (null (poly s)) then do
-        renderPolygon normalObjectWidth thrustPolygon
-    else
-        return()
+    renderPolygon normalObjectWidth (thrustPoly s)
+    --if (thrusting s) && not (null (poly s)) then do
+    --    renderPolygon normalObjectWidth thrustPolygon
+    --else
+    --    return()
 
 renderAsteroid :: Object -> Canvas ()
 renderAsteroid a = do
@@ -109,7 +110,7 @@ renderGame g = do
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship     _ _ _ _ _ _ _ _ _ _ _   -> renderShip obj
+    Ship     _ _ _ _ _ _ _ _ _ _ _ _ -> renderShip obj
     Missile  _ _ _ _ _ _             -> renderMissile obj
     Debris   _ _ _ _ _ _ _           -> renderDebris obj
     Game     _ _ _ _ _ _             -> renderGame obj

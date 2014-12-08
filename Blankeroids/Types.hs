@@ -31,6 +31,7 @@ data Object = Asteroid { basePoly :: Polygon,
                        }
             | Ship     { basePoly :: Polygon,
                          poly   :: Polygon,
+                         thrustPoly :: Polygon,
                          pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
@@ -73,8 +74,8 @@ isGame obj = case obj of
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ _ _ _ _ -> True
-    _                          -> False
+    Ship _ _ _ _ _ _ _ _ _ _ _ _ -> True
+    _                            -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of

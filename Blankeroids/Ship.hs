@@ -20,6 +20,7 @@ shipDrag      = 3.0
 
 theShip :: Object
 theShip = Ship {basePoly = shipPolygon, poly = shipPolygon,
+                thrustPoly = thrustPolygon,
                 pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                 angPos = 0.0, radius = 0.016, thrusting = False,
                 done = NoEvent, reqReanimate = False,
@@ -43,6 +44,10 @@ movingShip g s = proc ev -> do
             accumHoldBy destroyOccured False <<< delayEvent 4.0 -< ev
     reqHyperEnd <-
             accumHoldBy hyperOccured False <<< delayEvent 1.0 -< ev
+    -- Pulse thrust flame for a period after each thrust key event
+    let thrustOn = thrustToUnit ev `tag` True
+    thrustOff <- delayEvent 0.5 -< thrustToUnit ev `tag` False
+    thrusting' <- hold False -< mergeBy (||) thrustOn thrustOff
     -- Calculate accleration and velocity based on input thrust events and
     -- ship angle.
     rec
@@ -54,8 +59,11 @@ movingShip g s = proc ev -> do
     returnA -< s { poly = if (destroyed') then []
                           else transformPoly angPos'
                                 (pos2Point pos') (basePoly s),
+                   thrustPoly = if (destroyed' || not thrusting') then []
+                                else transformPoly angPos' (pos2Point pos')
+                                     thrustPolygon,
                    pos = pos', vel = vel', angPos = angPos',
-                   thrusting = ((vector2Rho accel) > 0.1),
+                   thrusting = thrusting',
                    -- Request a reanimation event if done with destroyed timeout
                    -- or hyperspace delay timeout
                    reqReanimate = reqReanimate' || reqHyperEnd,
@@ -84,6 +92,10 @@ movingShip g s = proc ev -> do
     hyperOccured :: Bool -> GameEvent -> Bool
     hyperOccured _       Hyperspace  = True
     hyperOccured initial _           = initial
+
+    thrustToUnit :: Event GameEvent -> Event ()
+    thrustToUnit (Event Thruster) = Event ()
+    thrustToUnit _                = NoEvent
 
     addMissile :: Position -> AngPosition -> [SFObject]
     addMissile p' ap' = [movingMissile $ newMissile p' ap']
@@ -130,6 +142,7 @@ movingShip g s = proc ev -> do
 
     newShip :: AngPosition -> Bool -> Object
     newShip ap'' h'' = Ship {basePoly = shipPolygon, poly = shipPolygon,
+                         thrustPoly = thrustPolygon,
                          pos = startPos, vel = vector2 0.0 0.0,
                          angPos = ap'', radius = 0.016, thrusting = False,
                          done = NoEvent, reqReanimate = False,
