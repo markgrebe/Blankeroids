@@ -93,21 +93,21 @@ playGame sfobjs = proc ev -> do
 route :: (Event GameEvent, IL Object) -> IL sf -> IL (Event GameEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
-    -- Ship signal functions
+    -- Ship data structures
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
-    -- Asteroid signal functions
+    -- Asteroid data structures
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
-    -- Misile signal functions
+    -- Misile data structures
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
-    -- Game signal functions
+    -- Game data structures
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
-    -- First ship signal function
+    -- First ship key
     ship' = if null ships then Nothing else Just (fst $ head ships)
     -- Ship data structure
     shipObj = if null ships then Nothing else lookupIL (fromJust ship') objs
-    -- First asteroid signal function
+    -- First asteroid key
     asteroid' = if null asteroids then Nothing else Just (fst $ head asteroids)
-    -- First game signal function
+    -- Game key
     game' = if null games then Nothing else Just (fst $ head games)
     -- Game data structure
     gameObj = fromJust $ lookupIL (fromJust game') objs
@@ -189,9 +189,9 @@ route (keyEv,objs) sfs = mapIL route' sfs
     routeAsteroid :: (ILKey, sf) -> (Event GameEvent, sf)
     routeAsteroid (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
                               (Event Reanimate, sfObj)
-    routeAsteroid (_,sfObj') = if roundComplete
+    routeAsteroid (k,sfObj') = if roundComplete
                                 then (Event DestroyedLast, sfObj')
-                                else (NoEvent, sfObj')
+                                else routeRest (k,sfObj')
 
     routeGame :: (ILKey, sf) -> (Event GameEvent, sf)
     routeGame (_,sfObj) =
