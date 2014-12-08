@@ -27,26 +27,42 @@ theShip = Ship {basePoly = shipPolygon, poly = shipPolygon,
 
 movingShip :: RandomGen g => g -> Object -> SFObject
 movingShip g s = proc ev -> do
+    -- Calculate the angular position of the ship, accumulating turn left and
+    -- turn right events.
     angPos' <- accumHoldBy accumAngPos 0.0 -< ev
+    -- Create fire event, based on fire key events, and the number of missiles
+    -- that are curently in the magazie and a reload rate.
     trigger' <- arr fireCannon -< ev
     (_, fire) <- magazine 4 4.5 -< trigger'
+    -- Calculate boolean flags for destroyed, hyperspace start, request
+    -- reanmiation, and request end of hyperspace based on input events and
+    -- delays
     (destroyed', hyperspace') <-
             accumHoldBy destroyHyperOccured (False, False) -< ev
     reqReanimate' <-
             accumHoldBy destroyOccured False <<< delayEvent 4.0 -< ev
     reqHyperEnd <-
             accumHoldBy hyperOccured False <<< delayEvent 1.0 -< ev
+    -- Calculate accleration and velocity based on input thrust events and
+    -- ship angle.
     rec
         accel <- arr calcAccel -< (ev, angPos', vel')
         vel' <- integral -< accel
+    -- Calculate the xy position, based on integral of velocity, wrappnig
+    -- at the edge of the screen as required.
     pos' <- wrapObject (radius s) <<< ((pos s) ^+^) ^<< integral -< vel'
     returnA -< s { poly = if (destroyed') then []
                           else transformPoly angPos'
                                 (pos2Point pos') (basePoly s),
                    pos = pos', vel = vel', angPos = angPos',
                    thrusting = ((vector2Rho accel) > 0.1),
-                   done = reanimateToUnit ev,
+                   -- Request a reanimation event if done with destroyed timeout
+                   -- or hyperspace delay timeout
                    reqReanimate = reqReanimate' || reqHyperEnd,
+                   -- Ship SF should be removed if it received a Reanimate Event
+                   done = reanimateToUnit ev,
+                   -- New SF's should be created for fire missile, ship debris,
+                   -- or a new ship or one coming out of hyperspace
                    spawn = foldl (mergeBy (++)) NoEvent
                         [(fire `tag` (addMissile pos' angPos')),
                          (destroyedToUnit ev `tag`
@@ -132,6 +148,8 @@ movingShip g s = proc ev -> do
     fireCannon (Event Fire) = Event ()
     fireCannon _            = NoEvent
 
+    -- Calculate acceleration based on if the ship is thrusting, or if not
+    -- slow it by inertia.
     calcAccel :: (Event GameEvent, AngPosition, Velocity) -> Acceleration
     calcAccel (Event Thruster, currAngPos, _) =
         vector2 (-shipThrust * sin currAngPos) (shipThrust * cos currAngPos)
@@ -147,6 +165,7 @@ movingShip g s = proc ev -> do
         debris <- mapM (oneDebris p) [0..(length shipDebrisPolygons - 1)]
         return debris
 
+    -- Create one piece of debris, at a random life span, velocity and angle.
     oneDebris :: RandomGen g => Position -> Int -> Rand g SFObject
     oneDebris p i = do
         life'  <- getRandomR(0.8,1.6)

@@ -10,6 +10,11 @@ import Blankeroids.Polygons
 import Blankeroids.Types
 import Blankeroids.Ship
 
+normalObjectWidth :: Double
+normalObjectWidth = 0.002
+debrisWidth :: Double
+debrisWidth = 0.001
+
 -- | A Canvas action to render the entire scene.
 renderScene :: IL Object -> Canvas ()
 renderScene a = do
@@ -29,66 +34,45 @@ scaleScene = do
     translate (0,h)
     scale (w, negate h)
 
-renderPolygon :: Polygon -> Canvas ()
-renderPolygon [] = return ()
-renderPolygon p  = do
+renderPolygon :: Double -> Polygon -> Canvas ()
+renderPolygon _      [] = return ()
+renderPolygon lwidth p  = do
     beginPath ()
     moveTo (head p)
     mapM_ lineTo (tail p)
-
-renderPolygonStroke :: Polygon -> Canvas ()
-renderPolygonStroke p = do
-    renderPolygon p
-    lineWidth 0.002
+    lineWidth lwidth
     strokeStyle "white"
     stroke()
 
-renderPolygons :: [Polygon] -> Canvas ()
-renderPolygons p = do
-    mapM_ renderPolygonStroke p
+renderPolygons :: Double -> [Polygon] -> Canvas ()
+renderPolygons lwidth p = do
+    mapM_ (renderPolygon lwidth) p
 
 renderShip :: Object -> Canvas ()
 renderShip s = do
-    renderPolygon (poly s)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
+    renderPolygon normalObjectWidth (poly s)
     if (thrusting s) && not (null (poly s)) then do
-        renderPolygon thrustPolygon
-        stroke()
+        renderPolygon normalObjectWidth thrustPolygon
     else
         return()
 
 renderAsteroid :: Object -> Canvas ()
 renderAsteroid a = do
-    renderPolygon (poly a)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
+    renderPolygon normalObjectWidth (poly a)
 
 renderMissile :: Object -> Canvas ()
 renderMissile m = do
-    renderPolygon (poly m)
-    lineWidth 0.002
-    strokeStyle "white"
-    stroke()
+    renderPolygon normalObjectWidth (poly m)
 
 renderDebris :: Object -> Canvas ()
 renderDebris d = do
-    renderPolygon (poly d)
-    lineWidth 0.001
-    strokeStyle "white"
-    stroke()
+    renderPolygon debrisWidth (poly d)
 
 renderGame :: Object -> Canvas ()
 renderGame g = do
-    renderPolygons (placedScorePolygons ++ placedLifePolygons)
-    lineWidth 0.001
-    strokeStyle "white"
-    stroke()
+    renderPolygons normalObjectWidth (placedScorePolygons ++ placedLifePolygons)
     if gameOver g then do
-        renderPolygons placedGameOverPolygons
-        stroke()
+        renderPolygons normalObjectWidth placedGameOverPolygons
     else
         return()
   where

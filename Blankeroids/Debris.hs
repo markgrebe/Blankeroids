@@ -9,7 +9,9 @@ import Blankeroids.Types
 
 movingDebris :: Object -> SFObject
 movingDebris d = proc _ -> do
+    -- Calculate the xy position, based on integral of velocity.
     pos' <- ((pos d) ^+^) ^<< integral -< (vel d)
+    -- Debris fades away after a certain lifetime
     done' <- after (life d) () -< ()
     returnA -< d { poly = translatePoly (pos2Point pos') (basePoly d),
                    pos = pos', done = done'}

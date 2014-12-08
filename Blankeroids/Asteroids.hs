@@ -24,6 +24,8 @@ asterGen1Rad  = 0.064
 asteroidValues :: [Int]
 asteroidValues = [20, 50, 100]
 
+-- Generate initial asteroids for a round at the edges of the screen.
+-- The integer parameter specifies the round number of the asteroid.
 initAsteroid :: RandomGen g => Int -> Rand g Object
 initAsteroid round' = do
     -- Get an initial position on the edge of the screen.
@@ -63,13 +65,18 @@ initAsteroid round' = do
                         poly   = asterPolygons !! asterIndex
                     }
 
+-- Create smaller asteroids at the position of an asteroid that
+-- was destroy.  The parameters specify asteroid position, current generation,
+-- and current game round.
 newAsteroids :: RandomGen g => Position -> Int -> Int -> Rand g [Object]
 newAsteroids p currgen round' = do
     asters <- replicateM 2 oneAsteroid
     return asters
   where
+    -- Each generation is half the size of the previous
     sizeScale :: Double
     sizeScale = 1.0 / fromIntegral ((currgen + 1) * 2)
+    -- The velocity of the asteroid increases with each generation.
     velScale :: Double
     velScale = if currgen == 0 then 1.5 else 2.0
     oneAsteroid :: RandomGen g => Rand g Object
@@ -93,12 +100,17 @@ newAsteroids p currgen round' = do
                 basePoly = scalePoly sizeScale (asterPolygons !! asterIndex),
                 poly = scalePoly sizeScale (asterPolygons !! asterIndex)}
 
+-- Generate the asteroids for a round, specifying the count and round number.
 initAsteroids :: RandomGen g => Int -> Int -> Rand g [Object]
 initAsteroids count round' = replicateM count (initAsteroid round')
 
+-- Generate the asteroids for the first game round.
 genInitialAsteroids :: RandomGen g => g -> [Object]
 genInitialAsteroids g = evalRand (initAsteroids initAsterNum 1) g
 
+-- Create the Asteroid signal functions, given the Asteroid data structures
+-- and an initial random generator.  The generator is split multiple times,
+-- so each signal function gets a unique generator.
 movingRandomAsteroids :: RandomGen g => g -> [Object] -> [SFObject]
 movingRandomAsteroids g as = map randomAster gensAsters
   where
@@ -106,18 +118,31 @@ movingRandomAsteroids g as = map randomAster gensAsters
     gensAsters = zip gens as
     randomAster (g', a) = movingAsteroid g' a
 
+-- Asteroid signal function
 movingAsteroid :: RandomGen g => g -> Object -> SFObject
 movingAsteroid g a = proc ev -> do
+    -- Calculate the xy position, based on integral of velocity, wrappnig
+    -- at the edge of the screen as required.
     pos' <- wrapObject (radius a) <<< ((pos a) ^+^) ^<< integral -< (vel a)
+    -- Calculate the angular position as the integral of angular velocity
     angPos' <- ((angPos a) +) ^<< integral -< (angVel a)
+    -- Calculate a boolean flag that indicates if an asteroid has been destroyed
+    -- based on incoming destroyed events.
     destroyed' <- accumHoldBy destroyedOccured False -< ev
+    -- Calculate a flag which is used to request a reanimation event for the
+    -- next round of asteroids.  This occurs if this asteroid is the last in
+    -- the round to be destroyed, and occurs 5 seconds after the destruction.
     reqReanimate' <- accumHoldBy destroyedOccured False <<< delayEvent 5.0 -< ev
     returnA -< a { poly = if (destroyed') then []
                           else transformPoly angPos'
                                     (pos2Point pos') (basePoly a),
                    pos = pos', angPos = angPos',
                    reqReanimate = reqReanimate',
+                   -- Asteroid SF shold be removed from list if it received
+                   -- a Destroyed or Reanimate Event.
                    done = merge (reanimateToUnit ev) (destroyedToUnit ev),
+                   -- New SF's should be created for the smaller asteoids and
+                   -- debris or for the next round.
                    spawn = mergeBy (++)
                            (anyDestroyedToUnit ev `tag` newObjects a pos')
                            (reanimateToUnit ev `tag` reanimateAsteroids ) }
@@ -135,6 +160,7 @@ movingAsteroid g a = proc ev -> do
     anyDestroyedToUnit (Event DestroyedLast) = Event ()
     anyDestroyedToUnit _                     = NoEvent
 
+    -- Create the next round of Asteroid signal functions
     reanimateAsteroids :: [SFObject]
     reanimateAsteroids =
         movingRandomAsteroids g3
@@ -143,6 +169,7 @@ movingAsteroid g a = proc ev -> do
         gameRound' = gameRound a
         numAsteroids = initAsterNum + 2 * gameRound'
 
+    -- Create the new, smaller asteroids from a destroyed one.
     newObjects :: Object -> Position -> [SFObject]
     newObjects a' p =
         evalRand (newDebris p) g2 ++
@@ -151,11 +178,13 @@ movingAsteroid g a = proc ev -> do
                 (evalRand (newAsteroids p (gen a') (gameRound a')) g4)
         else []
 
+    -- Create the debris from an asteroid destruction
     newDebris :: RandomGen g => Position -> Rand g [SFObject]
     newDebris p = do
         debris <- replicateM 16 (oneDebris p)
         return debris
 
+    -- Create one piece of debris, at a random life span, velocity and angle.
     oneDebris :: RandomGen g => Position -> Rand g SFObject
     oneDebris p = do
         life'  <- getRandomR(0.1,0.8)
@@ -168,6 +197,8 @@ movingAsteroid g a = proc ev -> do
 
 ---------------------------------------------------
 
+-- Polygons for the Asteroids.  There are 3 different asteroid shapes which
+-- are randomly chosen.
 asteroid1 :: Polygon
 asteroid1 = [(-0.064,-0.030),(-0.018,-0.030),(-0.032,-0.060),
                 ( 0.016,-0.060),( 0.062,-0.030),( 0.064,-0.014),

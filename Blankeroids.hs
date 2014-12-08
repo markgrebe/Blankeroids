@@ -27,7 +27,8 @@ main = do
     g <- newStdGen
     blankCanvas 3000 { events = ["keydown"] } (animateAsteriods g)
 
--- | Display an animation of multiple asteroids.
+-- | main reactimate loop with key event handling input function, Canvas
+--   output function.
 animateAsteriods :: RandomGen g => g -> DeviceContext -> IO ()
 animateAsteriods g = reactimateSFinContext handleKeyEvents
                                            renderScene
@@ -73,6 +74,8 @@ movingObjects g as ship gm = playGame (listToIL ([gameSF, shipSF] ++ aSFs))
     shipSF = movingShip g2 ship
     gameSF = playingGame gm
 
+-- Main signal game signal function, looping the object data structures back in
+-- as inputs.
 playGame :: IL SFObject -> SF (Event GameEvent) (IL Object)
 playGame sfobjs = proc ev -> do
   rec
@@ -85,19 +88,31 @@ playGame sfobjs = proc ev -> do
                              (arr killOrSpawn >>> notYet)
                              (\sfs f -> game (f sfs))
 
+-- Route routine which routes input Events to the proper Object signal
+-- functions.
 route :: (Event GameEvent, IL Object) -> IL sf -> IL (Event GameEvent, sf)
 route (keyEv,objs) sfs = mapIL route' sfs
   where
+    -- Ship signal functions
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    -- Asteroid signal functions
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
+    -- Misile signal functions
     missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
+    -- Game signal functions
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
+    -- First ship signal function
     ship' = if null ships then Nothing else Just (fst $ head ships)
+    -- Ship data structure
     shipObj = if null ships then Nothing else lookupIL (fromJust ship') objs
+    -- First asteroid signal function
     asteroid' = if null asteroids then Nothing else Just (fst $ head asteroids)
+    -- First game signal function
     game' = if null games then Nothing else Just (fst $ head games)
+    -- Game data structure
     gameObj = fromJust $ lookupIL (fromJust game') objs
 
+    -- Calculate the list of Ships and Asteroids which intersect
     sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     sAsHits ((sk, so):[]) ((ak,ao):rest) =
       if polygonInPolygon (poly so) (poly ao)
@@ -105,6 +120,8 @@ route (keyEv,objs) sfs = mapIL route' sfs
       else sAsHits [(sk, so)] rest
     sAsHits _        _              = []
 
+    -- Calculate the list of Missile and Asteroid collisions from a single
+    -- missile
     mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [(ILKey,ILKey)]
     mAsHits _        []             = []
     mAsHits (mk, mo) ((ak,ao):rest) =
@@ -112,34 +129,44 @@ route (keyEv,objs) sfs = mapIL route' sfs
       then (mk, ak) : (mAsHits (mk, mo) rest)
       else mAsHits (mk, mo) rest
 
+    -- Calculate the list of Missile and Asteroid collisions from all
+    -- missile
     msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey, ILKey)]
     msAsHits []     _  = []
     msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
 
+    -- Calculate the value of a destroyed asteroid
     getAsteroidValue :: ILKey -> Int
     getAsteroidValue k = asteroidValues !! (gen obj)
       where
         obj = fromJust $ lookupIL k objs
 
-    safeDistance = 0.10
-    safeZone = [(0.5 - safeDistance, 0.5 - safeDistance),
-                (0.5 - safeDistance, 0.5 + safeDistance),
-                (0.5 + safeDistance, 0.5 + safeDistance),
-                (0.5 + safeDistance, 0.5 - safeDistance),
-                (0.5 - safeDistance, 0.5 - safeDistance)]
+    -- Function which takes a list of asteroid associations, and makes sure
+    -- none of the asteroids are in the safe zone around where the ship will
+    -- be reanimated.
     safeToReanimate :: [(ILKey, Object)] -> Bool
     safeToReanimate []             = True
     safeToReanimate ((_,ao):rest) =
-      if polygonInPolygon (poly ao) safeZone
-      then False
-      else safeToReanimate rest
+        if polygonInPolygon (poly ao) safeZone
+        then False
+        else safeToReanimate rest
+      where
+        safeDistance = 0.10
+        safeZone = [(0.5 - safeDistance, 0.5 - safeDistance),
+                    (0.5 - safeDistance, 0.5 + safeDistance),
+                    (0.5 + safeDistance, 0.5 + safeDistance),
+                    (0.5 + safeDistance, 0.5 - safeDistance),
+                    (0.5 - safeDistance, 0.5 - safeDistance)]
 
     (missileHits, asteroidMissileHits) = unzip $ msAsHits missiles asteroids
     (shipHits, asteroidShipHits) = unzip $ sAsHits ships asteroids
     asteroidHits = nub $ asteroidMissileHits ++ asteroidShipHits
+    -- Unique missiles destroyed
     missileHits' = nub missileHits
+    -- Unique Ships destoryed
     shipHits' = nub shipHits
     allHits = asteroidHits ++ missileHits' ++ shipHits'
+    -- All asteroids destroyed??
     roundComplete = length asteroidHits == length asteroids
     scoreChanged' = sum $ map getAsteroidValue asteroidHits
     shipDestroyed' = length shipHits /= 0
@@ -179,6 +206,9 @@ route (keyEv,objs) sfs = mapIL route' sfs
                             then (Event Destroyed, sfObj')
                             else (keyEv, sfObj')
 
+-- Function which creates and deletes signal functions based on requests from
+-- curently running signal functions through their done and spawn fields of
+-- the output data structures.
 killOrSpawn :: ((Event GameEvent, IL Object) , IL Object) ->
                     Event (IL SFObject -> IL SFObject)
 killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)

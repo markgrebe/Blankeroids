@@ -8,6 +8,8 @@ import Blankeroids.Types
 pos2Point :: Position -> Point
 pos2Point p = (vector2X p, vector2Y p)
 
+-- Create a List of edges of a polygon from a list of it's vertices.
+-- A polygon must have two vertices to have an edge.
 polyEdges :: Polygon -> [Edge]
 polyEdges []      = []
 polyEdges [_]     = []
@@ -36,6 +38,7 @@ scalePoly scaleFactor polygon = map scalePoint polygon
  where
     scalePoint p = (scaleFactor * fst p, scaleFactor * snd p)
 
+-- Return a boolean indicating if a point is inside of a polygon.
 pointInPolygon :: Point -> Polygon -> Bool
 pointInPolygon point polygon = foldr acumNode False (polyEdges polygon)
   where
@@ -53,5 +56,6 @@ pointInPolygon point polygon = foldr acumNode False (polyEdges polygon)
         polY1 = snd $ fst ed
         polY2 = snd $ snd ed
 
+-- Return a boolean indicating if polygons intersect
 polygonInPolygon :: Polygon -> Polygon -> Bool
 polygonInPolygon poly1 poly2 = or $ map (flip pointInPolygon poly2) poly1

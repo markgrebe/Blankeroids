@@ -64,6 +64,8 @@ data Object = Asteroid { basePoly :: Polygon,
                          spawn  :: Event [SFObject]
                        }
 
+-- Utility functions for determinine type of Object data structure.
+
 isGame :: Object -> Bool
 isGame obj = case obj of
     Game _ _ _ _ _ _ -> True
@@ -84,8 +86,6 @@ isAsteroid obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ _ _ _  -> True
     _                                 -> False
 
-type SFObject = SF (Event GameEvent) Object
-
 data GameEvent = TurnLeft |
                  TurnRight |
                  Thruster |
@@ -98,3 +98,5 @@ data GameEvent = TurnLeft |
                               shipDestroyed :: Bool,
                               newRound :: Bool }
     deriving (Show, Eq)
+
+type SFObject = SF (Event GameEvent) Object
