@@ -64,8 +64,17 @@ data Object = Asteroid { basePoly :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
+            | Wait     { polys  :: [Polygon],
+                         done   :: Event (),
+                         spawn  :: Event [SFObject]
+                       }
 
 -- Utility functions for determinine type of Object data structure.
+
+isWait :: Object -> Bool
+isWait obj = case obj of
+    Wait _ _ _ -> True
+    _          -> False
 
 isGame :: Object -> Bool
 isGame obj = case obj of
@@ -92,6 +101,7 @@ data GameEvent = TurnLeft |
                  Thruster |
                  Fire |
                  Hyperspace |
+                 OtherKey Int |
                  Destroyed |
                  DestroyedLast |
                  Reanimate |

@@ -19,7 +19,7 @@ import Blankeroids.Polygons
 import Blankeroids.Types
 import Blankeroids.Asteroids
 import Blankeroids.Game
-import Blankeroids.Ship
+import Blankeroids.Wait
 
 ---------------------------------------------------
 main :: IO ()
@@ -32,11 +32,7 @@ main = do
 animateAsteriods :: RandomGen g => g -> DeviceContext -> IO ()
 animateAsteriods g = reactimateSFinContext handleKeyEvents
                                            renderScene
-                                           (movingObjects
-                                              g' (genInitialAsteroids g'')
-                                              theShip theGame)
-  where
-    (g', g'') = split g
+                                           (initialObjects g)
 
 ---------------------------------------------------
 
@@ -59,20 +55,18 @@ handleKeyEvents blankEvent = do
                            | a == upKey    -> Event Thruster
                            | a == downKey  -> Event Hyperspace
                            | a == spaceKey -> Event Fire
-                           | otherwise     -> NoEvent
+                           | otherwise     -> Event (OtherKey a)
                     Nothing                -> NoEvent
     return keyEvent
 
--- | Construct a list of moving game objects from a list of
---   initial configurations.
-movingObjects :: RandomGen g => g -> [Object] -> Object -> Object ->
-                    SF (Event GameEvent) (IL Object)
-movingObjects g as ship gm = playGame (listToIL ([gameSF, shipSF] ++ aSFs))
+-- | Construct a list of intial objects for the game, in this case the
+--   game object which tracks score, and the wait object which asks
+--   the user to press any key.
+initialObjects :: RandomGen g => g -> SF (Event GameEvent) (IL Object)
+initialObjects g = playGame (listToIL [waitSF g, gameSF])
   where
-    (g1, g2) = split g
-    aSFs = movingRandomAsteroids g1 as
-    shipSF = movingShip g2 ship
-    gameSF = playingGame gm
+    waitSF g' = waitingUser g' theWait
+    gameSF = playingGame theGame
 
 -- Main signal game signal function, looping the object data structures back in
 -- as inputs.

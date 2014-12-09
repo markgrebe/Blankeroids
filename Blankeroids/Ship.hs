@@ -30,7 +30,7 @@ movingShip :: RandomGen g => g -> Object -> SFObject
 movingShip g s = proc ev -> do
     -- Calculate the angular position of the ship, accumulating turn left and
     -- turn right events.
-    angPos' <- accumHoldBy accumAngPos 0.0 -< ev
+    angPos' <-  accumHoldBy accumAngPos 0.0 -< ev
     -- Create fire event, based on fire key events, and the number of missiles
     -- that are curently in the magazie and a reload rate.
     trigger' <- arr fireCannon -< ev

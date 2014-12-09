@@ -52,10 +52,6 @@ renderShip :: Object -> Canvas ()
 renderShip s = do
     renderPolygon normalObjectWidth (poly s)
     renderPolygon normalObjectWidth (thrustPoly s)
-    --if (thrusting s) && not (null (poly s)) then do
-    --    renderPolygon normalObjectWidth thrustPolygon
-    --else
-    --    return()
 
 renderAsteroid :: Object -> Canvas ()
 renderAsteroid a = do
@@ -107,6 +103,10 @@ renderGame g = do
     gameOverPositions :: [Point]
     gameOverPositions = zip [0.340,0.380..0.700] (take 9 $ repeat 0.5)
 
+renderWait :: Object -> Canvas ()
+renderWait w = do
+    renderPolygons normalObjectWidth (polys w)
+
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
     Asteroid _ _ _ _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
@@ -114,6 +114,7 @@ renderObject obj = case obj of
     Missile  _ _ _ _ _ _             -> renderMissile obj
     Debris   _ _ _ _ _ _ _           -> renderDebris obj
     Game     _ _ _ _ _ _             -> renderGame obj
+    Wait     _ _ _                   -> renderWait obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject
@@ -183,20 +184,40 @@ letterGPolygon  = [( 0.000,-0.008),( 0.015,-0.008),( 0.015,-0.023),
                    (-0.015,-0.023),(-0.015, 0.023),( 0.015, 0.023),
                    ( 0.015, 0.008)]
 
+letterKPolygon :: Polygon
+letterKPolygon  = [(-0.015,-0.023),(-0.015, 0.023),(-0.015, 0.000),
+                   ( 0.015, 0.023),(-0.015, 0.000),( 0.015,-0.023)]
+
 letterMPolygon :: Polygon
 letterMPolygon  = [(-0.015,-0.023),(-0.015, 0.023),(0.000,0.008),
                    ( 0.015, 0.023),( 0.015,-0.023)]
 
+letterNPolygon :: Polygon
+letterNPolygon  = [(-0.015,-0.023),(-0.015, 0.023),(0.015,-0.023),
+                   ( 0.015, 0.023)]
+
 letterOPolygon :: Polygon
 letterOPolygon  = digitZeroPolygon
+
+letterPPolygon :: Polygon
+letterPPolygon = [(-0.015,-0.023),(-0.015, 0.023),( 0.015, 0.023),
+                  ( 0.015, 0.000),(-0.015, 0.000)]
 
 letterRPolygon :: Polygon
 letterRPolygon = [(-0.015,-0.023),(-0.015, 0.023),( 0.015, 0.023),
                   ( 0.015, 0.000),(-0.015, 0.000),(-0.005, 0.000),
                   ( 0.015,-0.023)]
 
+letterSPolygon :: Polygon
+letterSPolygon = [( 0.015, 0.023),(-0.015, 0.023),(-0.015, 0.000),
+                  ( 0.015, 0.000),( 0.015,-0.023),(-0.015,-0.023)]
+
 letterVPolygon :: Polygon
 letterVPolygon  = [(-0.015, 0.023),(0.000, -0.023),( 0.015, 0.023)]
+
+letterYPolygon :: Polygon
+letterYPolygon  = [(-0.015, 0.023),(0.000, 0.008),( 0.015, 0.023),
+                   (0.000,  0.008),(0.000, -0.023)]
 
 letterSpacePolygon :: Polygon
 letterSpacePolygon = []
