@@ -7,15 +7,16 @@ import FRP.Yampa
 import Blankeroids.Types
 import Blankeroids.Saucer
 
+bonusScore :: Int
+bonusScore = 8000
+
 theGame :: Object
 theGame = Game {score = 0, lives = 3, theRound = 1, gameOver = False,
                 done = NoEvent, spawn = NoEvent }
 
 playingGame :: RandomGen g => g -> Object -> SFObject
 playingGame g gm = proc ev -> do
-    score' <- accumHoldBy accumScore 0 -< ev
-    -- ToDo: Bonus lives
-    lives' <- accumHoldBy accumLives 3 -< ev
+    (score',lives') <- accumHoldBy accumScoreLives (0,3) -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
     gameOver' <- hold False <<< edgeTag True -< lives' <= 0
     createSaucer <- after (randomTime g') () -< ()
@@ -25,13 +26,19 @@ playingGame g gm = proc ev -> do
   where
     (g', g'') = split g
 
-    accumScore :: Int -> GameEvent -> Int
-    accumScore start GameChange { scoreChanged = s} = start + s
-    accumScore start _                              = start
-
-    accumLives :: Int -> GameEvent -> Int
-    accumLives start GameChange {shipDestroyed = sd} | sd == True = start - 1
-    accumLives start _                                            = start
+    accumScoreLives :: (Int, Int) -> GameEvent -> (Int, Int)
+    accumScoreLives (startScore, startLives) GameChange { scoreChanged = s,
+                                                          shipDestroyed = sd } =
+      let
+        nextScore = startScore + s
+        bonusLife = (nextScore `mod` bonusScore) < (startScore `mod` bonusScore)
+        lostLives = if sd then -1 else 0
+        gainLives = if bonusLife then 1 else 0
+        nextLives = startLives + gainLives + lostLives
+      in
+        (nextScore, nextLives)
+    accumScoreLives (startScore, startLives) _ =
+        (startScore, startLives)
 
     accumRounds :: Int -> GameEvent -> Int
     accumRounds start GameChange {newRound = rc} | rc == True = start + 1

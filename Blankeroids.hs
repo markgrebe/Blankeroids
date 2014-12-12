@@ -19,7 +19,6 @@ import Blankeroids.Polygons
 import Blankeroids.Types
 import Blankeroids.Asteroids
 import Blankeroids.Saucer
-import Blankeroids.Game
 import Blankeroids.Wait
 
 ---------------------------------------------------
