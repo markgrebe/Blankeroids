@@ -18,30 +18,42 @@ saucerVel  :: Double
 saucerVel  = 0.1
 saucerRad  :: Double
 saucerRad  = 0.035
-saucerValue :: Int
-saucerValue = 200
+saucerValues :: [Int]
+saucerValues = [1000,200]
+saucerCourseChangeInterval :: Double
+saucerCourseChangeInterval = 2.0
+saucerFireInterval :: Double
+saucerFireInterval = 1.0
+interSaucerInterval :: Double
+interSaucerInterval = 10.0
 
 movingSaucer :: RandomGen g => g -> Object -> SFObject
 movingSaucer g s = proc ev -> do
     -- Saucer occasionally changes course by 45 deg.
-    changeCourse <- occasionally g 2.0 () -< ()
+    changeCourse <- occasionally g saucerCourseChangeInterval () -< ()
     (vel', course') <-
             accumHoldBy courseAdjust (vel s, course s) -< changeCourse
     -- Saucer occasionally fires it's missiles.
-    fire <- occasionally g 1.0 () -< ()
+    fire <- occasionally g saucerFireInterval () -< ()
     fireAng' <- accumHoldBy (\fa _ -> fa + 1) (fireAng s) -< fire
     -- Calculate the xy position, based on integral of velocity, wrappnig
     -- at the edge of the screen as required.
     pos' <- wrapObjectY (radius s) <<< ((pos s) ^+^) ^<< integral -< vel'
     -- See if saucer has moved off of sides of screen
     offEdge' <- offEdge -< pos'
-    -- Calculate boolean flags for destroyed and requestreanmiation,
+    -- Calculate boolean flags for destroyed and reanimate,
     -- based on input events and delays
     let doneEvent = mergeBy (\_ _ -> ()) (destroyedToUnit ev) offEdge'
     destroyed' <- accumHoldBy (\_ _ -> True) False -< doneEvent
-    reanimate' <- delayEvent 10.0 -< doneEvent
+    reanimate' <- delayEvent interSaucerInterval -< doneEvent
+    -- Track Ship position so small saucer can fire at it
+    shipPos <- hold (vector2 0.5 0.5) -< shipPositionToPos ev
+    let dAng = vector2Theta (shipPos ^-^ pos') - pi/2
+        missileAng = if (kind s) == 0
+                     then dAng + ((fireAngs s) !! fireAng')
+                     else ((fireAngs s) !! fireAng')
     returnA -< s { polys = if (destroyed') then []
-                           else translatePolys (pos2Point pos') saucerPolygons,
+                           else translatePolys (pos2Point pos') (basePolys s),
                    pos = pos', vel = vel', course = course', fireAng = fireAng',
                    -- Saucer should be removed if it is time for a new one
                    done = reanimate',
@@ -49,20 +61,24 @@ movingSaucer g s = proc ev -> do
                    -- debris, or a new saucer.
                    spawn = foldl (mergeBy (++)) NoEvent
                         [(gate fire (not destroyed') `tag`
-                            (addMissile pos' ((fireAngs s) !! fireAng'))),
+                            (addMissile pos' missileAng)),
                          (destroyedToUnit ev `tag`
                             (evalRand (newDebris pos') g')),
-                         (reanimate' `tag` (newSaucer g''))] }
+                         (reanimate' `tag` (newSaucer g'' ((gen s) + 1)))] }
   where
     (g', g'') = split g
+
+    shipPositionToPos :: Event GameEvent -> Event Position
+    shipPositionToPos (Event (ShipPosition p)) = Event p
+    shipPositionToPos _                        = NoEvent
 
     courseAdjust :: (Velocity, Int) -> () -> (Velocity, Int)
     courseAdjust (_, c1) _ = (newVelocity, nextIndex)
       where
         nextIndex = c1 + 1
         newCourse = (courses s) !! nextIndex
-        newVelocity = vector2 (saucerVel * sin newCourse)
-                              (saucerVel * cos newCourse)
+        newVelocity = vector2 ((velMag s) * sin newCourse)
+                              ((velMag s) * cos newCourse)
 
     -- Signal function which creates an event when saucer goes off side.
     offEdge :: SF Position (Event ())
@@ -103,8 +119,8 @@ movingSaucer g s = proc ev -> do
                          life = life', done = NoEvent, spawn = NoEvent } )
 
 -- Generate saucer for a round at the edges of the screen.
-newSaucer :: RandomGen g => g -> [SFObject]
-newSaucer g = [movingSaucer g' (evalRand initSaucer g'')]
+newSaucer :: RandomGen g => g -> Int -> [SFObject]
+newSaucer g newGen = [movingSaucer g' (evalRand initSaucer g'')]
   where
     (g', g'') = split g
 
@@ -112,23 +128,47 @@ newSaucer g = [movingSaucer g' (evalRand initSaucer g'')]
     initSaucer = do
         -- Get an initial position on the edge of the screen.
         initPos <- getRandomR (0.0, 2.0)
-        fireAngs' <- getRandomRs (0.0, 2*pi)
+        -- Choose a random course for the saucer
         courseIndex <- getRandomR (0, (length saucerCoursesLeft) - 1)
         let (x,y,courses') = if initPos < 1.0
                         then (0.0, initPos, saucerCoursesLeft !! courseIndex)
                         else (1.0, initPos, saucerCoursesRight !! courseIndex)
-        let v = if x == 0.0 then vector2 saucerVel    0.0
-                else             vector2 (-saucerVel) 0.0
+        -- Get the type of saucer. The first 3 are large, then the fourth is
+        -- small, and after that it is random.
+        randKind <- getRandomR (0,1)
+        let kind' = if newGen < 3
+                    then 1
+                    else if newGen == 3
+                         then 0
+                         else randKind
+        -- The missiles are fired either totally randomly (in the case of a
+        -- large saucer), or in a error range around the vector from the
+        -- saucer to the ship (in the case of the small saucer).  The error
+        -- range gets smaller with successive small saucer generations.
+        let angError = 0.4 / (1.0 + 0.3 * fromIntegral (newGen - 3))
+        let angRange1 = if kind' == 1 then 0    else -angError
+        let angRange2 = if kind' == 1 then 2*pi else  angError
+        fireAngs' <- getRandomRs (angRange1, angRange2)
+        -- Small saucer is faster than large one also.
+        let velMag' = if kind' == 1 then saucerVel else saucerVel * 1.5
+        let v = if x == 0.0 then vector2 velMag'    0.0
+                else             vector2 (-velMag') 0.0
+        let polys' = if kind' == 0 then smallSaucerPolygons
+                                   else saucerPolygons
         return Saucer { pos    = vector2 x y,
                         vel    = v,
+                        velMag = velMag',
                         radius = saucerRad,
                         course = 0,
                         courses = courses',
                         fireAng = 0,
                         fireAngs = fireAngs',
+                        gen    = newGen,
+                        kind   = kind',
                         done   = NoEvent,
                         spawn  = NoEvent,
-                        polys   = saucerPolygons
+                        basePolys = polys',
+                        polys  = polys'
                         }
 
 ---------------------------------------------------
@@ -147,6 +187,9 @@ saucerPolygon3 = [( 0.035, 0.008),(-0.035, 0.008),(-0.014,-0.008),
 
 saucerPolygons :: [Polygon]
 saucerPolygons = [saucerPolygon1, saucerPolygon2, saucerPolygon3]
+
+smallSaucerPolygons :: [Polygon]
+smallSaucerPolygons = map (scalePoly 0.4) saucerPolygons
 
 saucerCoursesLeft :: [[AngPosition]]
 saucerCoursesLeft = [cycle [pi / 2, pi / 4, pi / 2, 3 * pi / 4],

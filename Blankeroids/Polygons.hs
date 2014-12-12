@@ -2,6 +2,7 @@
 
 module Blankeroids.Polygons where
 
+import Data.List(nub)
 import FRP.Yampa.Vector2
 import Blankeroids.Types
 
@@ -67,8 +68,9 @@ polygonInPolygon :: Polygon -> Polygon -> Bool
 polygonInPolygon poly1 poly2 = or $ map (flip pointInPolygon poly2) poly1
 
 polygonInPolygons :: Polygon -> [Polygon] -> Bool
-polygonInPolygons poly' polys' = or $ map (polygonInPolygon poly') polys'
+polygonInPolygons poly' polys' = polygonInPolygon poly' (nub (concat polys'))
 
 polygonsInPolygons :: [Polygon] -> [Polygon] -> Bool
-polygonsInPolygons polys1 polys2 = or $ map (flip polygonInPolygons polys1) polys2
+polygonsInPolygons polys1 polys2 = polygonInPolygon (nub (concat polys1))
+                                                    (nub (concat polys2))
 

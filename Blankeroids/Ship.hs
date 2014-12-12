@@ -17,6 +17,10 @@ shipThrust    :: Double
 shipThrust    = 10.0
 shipDrag      :: Double
 shipDrag      = 3.0
+shipHyperLength :: Double
+shipHyperLength = 1.0
+shipReaniInterval :: Double
+shipReaniInterval = 4.0
 
 theShip :: Object
 theShip = Ship {polys = [shipPolygon],
@@ -40,9 +44,11 @@ movingShip g s = proc ev -> do
     (destroyed', hyperspace') <-
             accumHoldBy destroyHyperOccured (False, False) -< ev
     reqReanimate' <-
-            accumHoldBy destroyOccured False <<< delayEvent 4.0 -< ev
+            accumHoldBy destroyOccured False <<<
+            delayEvent shipReaniInterval -< ev
     reqHyperEnd <-
-            accumHoldBy hyperOccured False <<< delayEvent 1.0 -< ev
+            accumHoldBy hyperOccured False <<<
+            delayEvent shipHyperLength -< ev
     -- Pulse thrust flame for a period after each thrust key event
     let thrustOn = thrustToUnit ev `tag` True
     thrustOff <- delayEvent 0.5 -< thrustToUnit ev `tag` False

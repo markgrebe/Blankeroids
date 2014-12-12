@@ -40,13 +40,17 @@ data Object = Asteroid { basePoly :: Polygon,
                          reanimate :: Event(),
                          spawn  :: Event [SFObject]
                        }
-            | Saucer    { polys :: [Polygon],
+            | Saucer    { basePolys :: [Polygon],
+                         polys :: [Polygon],
                          pos    :: Position,
+                         velMag :: Double,
                          vel    :: Velocity,
                          course :: Int,
                          courses :: [AngPosition],
                          fireAng :: Int,
                          fireAngs :: [AngPosition],
+                         gen    :: Int,
+                         kind   :: Int,
                          radius :: Double,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
@@ -79,6 +83,7 @@ data Object = Asteroid { basePoly :: Polygon,
                        }
 
 data MissileSource = ShipMissile | SaucerMissile
+    deriving Eq
 
 -- Utility functions for determinine type of Object data structure.
 
@@ -99,8 +104,8 @@ isShip obj = case obj of
 
 isSaucer :: Object -> Bool
 isSaucer obj = case obj of
-    Saucer _ _ _ _ _ _ _ _ _ _ -> True
-    _                          -> False
+    Saucer _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> True
+    _                                  -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
@@ -135,6 +140,7 @@ data GameEvent = TurnLeft |
                  Destroyed |
                  DestroyedLast |
                  Reanimate |
+                 ShipPosition Position|
                  GameChange { scoreChanged :: Int,
                               shipDestroyed :: Bool,
                               newRound :: Bool }

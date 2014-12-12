@@ -112,13 +112,13 @@ renderWait w = do
 
 renderObject :: Object -> Canvas ()
 renderObject obj = case obj of
-    Asteroid _ _ _ _ _ _ _ _ _ _ _ _ -> renderAsteroid obj
-    Ship     _ _ _ _ _ _ _ _ _ _     -> renderShip obj
-    Saucer   _ _ _ _ _ _ _ _ _ _     -> renderSaucer obj
-    Missile  _ _ _ _ _ _             -> renderMissile obj
-    Debris   _ _ _ _ _ _ _           -> renderDebris obj
-    Game     _ _ _ _ _ _             -> renderGame obj
-    Wait     _ _ _                   -> renderWait obj
+    Asteroid _ _ _ _ _ _ _ _ _ _ _ _     -> renderAsteroid obj
+    Ship     _ _ _ _ _ _ _ _ _ _         -> renderShip obj
+    Saucer   _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> renderSaucer obj
+    Missile  _ _ _ _ _ _                 -> renderMissile obj
+    Debris   _ _ _ _ _ _ _               -> renderDebris obj
+    Game     _ _ _ _ _ _                 -> renderGame obj
+    Wait     _ _ _                       -> renderWait obj
 
 renderObjects :: [Object] -> Canvas ()
 renderObjects = mapM_ renderObject

@@ -22,7 +22,7 @@ playingGame g gm = proc ev -> do
     createSaucer <- after (randomTime g') () -< ()
     returnA -< gm { score = score', lives = lives', theRound = round',
                     gameOver = gameOver',
-                    spawn = createSaucer `tag` newSaucer g''}
+                    spawn = createSaucer `tag` newSaucer g'' 0}
   where
     (g', g'') = split g
 
@@ -45,4 +45,5 @@ playingGame g gm = proc ev -> do
     accumRounds start _                                       = start
 
     randomTime :: RandomGen g => g -> Double
-    randomTime gen' = fst $ randomR (5.0, 10.0) gen'
+    randomTime gen' = fst $ randomR (interSaucerInterval/2.0,
+                                     interSaucerInterval) gen'

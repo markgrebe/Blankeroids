@@ -100,6 +100,8 @@ route (keyEv,objs) sfs = mapIL route' sfs
     ship' = if null ships then Nothing else Just (fst $ head ships)
     -- Ship data structure
     shipObj = if null ships then Nothing else lookupIL (fromJust ship') objs
+    -- First saucer key
+    saucer' = if null saucers then Nothing else Just (fst $ head saucers)
     -- First asteroid key
     asteroid' = if null asteroids then Nothing else Just (fst $ head asteroids)
     -- Game key
@@ -138,7 +140,9 @@ route (keyEv,objs) sfs = mapIL route' sfs
 
     -- Calculate the value of a destroyed saucer
     getSaucerValue :: ILKey -> Int
-    getSaucerValue _ = saucerValue
+    getSaucerValue k = saucerValues !! (kind obj)
+      where
+        obj = fromJust $ lookupIL k objs
 
     -- Function which takes a list of asteroid associations, and makes sure
     -- none of the asteroids are in the safe zone around where the ship will
@@ -200,21 +204,31 @@ route (keyEv,objs) sfs = mapIL route' sfs
     route' :: (ILKey, sf) -> (Event GameEvent, sf)
     route' (k,sfObj) | isJust game' && game' == Just k = routeGame (k,sfObj)
     route' (k,sfObj) | isJust ship' && ship' == Just k = routeShip (k,sfObj)
+    route' (k,sfObj) | isJust saucer' && saucer' == Just k =
+                       routeSaucer (k,sfObj)
     route' (k,sfObj) | isJust asteroid' && asteroid' == Just k =
                        routeAsteroid (k,sfObj)
     route' (k,sfObj) = routeRest (k,sfObj)
 
     routeShip :: (ILKey, sf) -> (Event GameEvent, sf)
     routeShip (_,sfObj) | reqReanimate $ fromJust shipObj =
-                          if safeToReanimate asteroids &&
+                          if safeToReanimate (asteroids ++ saucers) &&
                              (lives gameObj) > 0
                           then (Event Reanimate, sfObj)
                           else (NoEvent, sfObj)
     routeShip (k,sfObj) = routeRest (k,sfObj)
 
+    routeSaucer :: (ILKey, sf) -> (Event GameEvent, sf)
+    routeSaucer (k',sfObj') = if k' `elem` allHits
+                              then (Event Destroyed, sfObj')
+                              else if isJust shipObj
+                                  then (Event (ShipPosition
+                                           (pos (fromJust shipObj))), sfObj')
+                                  else (NoEvent, sfObj')
+
     routeAsteroid :: (ILKey, sf) -> (Event GameEvent, sf)
-    routeAsteroid (k,sfObj) | reqReanimate $ fromJust $ lookupIL k objs =
-                              (Event Reanimate, sfObj)
+    routeAsteroid (k,sfObj') | reqReanimate $ fromJust $ lookupIL k objs =
+                              (Event Reanimate, sfObj')
     routeAsteroid (k,sfObj') = if roundComplete
                                 then (Event DestroyedLast, sfObj')
                                 else routeRest (k,sfObj')
