@@ -9,6 +9,7 @@ import Blankeroids.Graphics
 import Blankeroids.Polygons
 import Blankeroids.Asteroids
 import Blankeroids.Ship
+import Blankeroids.Game
 
 theWait :: Object
 theWait = Wait {polys = [], done = NoEvent, spawn = NoEvent }
@@ -21,10 +22,12 @@ waitingUser g wa = proc ev -> do
                    spawn = ev `tag` gameObjects}
   where
     (g1,g2) = split g
-    (g3,g4) = split g2
-    aSFs = movingRandomAsteroids g1 (genInitialAsteroids g3)
-    shipSF = movingShip g4 theShip
-    gameObjects = shipSF : aSFs
+    (g3,g4) = split g1
+    (g5,g6) = split g2
+    aSFs = movingRandomAsteroids g3 (genInitialAsteroids g4)
+    shipSF = movingShip g5 theShip
+    gameSF = playingGame g6 theGame
+    gameObjects = [shipSF, gameSF] ++ aSFs
     placedPressAnyPolygons :: [Polygon]
     placedPressAnyPolygons = map translatePolyPair
                                 (zip pressAnyPositions pressAnyPolygons)

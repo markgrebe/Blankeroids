@@ -38,7 +38,7 @@ movingSaucer g s = proc ev -> do
     -- Calculate boolean flags for destroyed and requestreanmiation,
     -- based on input events and delays
     let doneEvent = mergeBy (\_ _ -> ()) (destroyedToUnit ev) offEdge'
-    destroyed' <- accumHoldBy destroyOccured False -< doneEvent
+    destroyed' <- accumHoldBy (\_ _ -> True) False -< doneEvent
     reanimate' <- delayEvent 10.0 -< doneEvent
     returnA -< s { polys = if (destroyed') then []
                            else translatePolys (pos2Point pos') saucerPolygons,
@@ -64,6 +64,7 @@ movingSaucer g s = proc ev -> do
         newVelocity = vector2 (saucerVel * sin newCourse)
                               (saucerVel * cos newCourse)
 
+    -- Signal function which creates an event when saucer goes off side.
     offEdge :: SF Position (Event ())
     offEdge = proc p -> do
         returnA -< off (vector2X p)
@@ -71,9 +72,6 @@ movingSaucer g s = proc ev -> do
         off x | x < 0.0 - saucerRad = Event ()
         off x | x > 1.0 + saucerRad = Event ()
         off _ | otherwise = NoEvent
-
-    destroyOccured :: Bool -> () -> Bool
-    destroyOccured _ _ = True
 
     addMissile :: Position -> AngPosition -> [SFObject]
     addMissile p' ap' = [movingMissile $ newMissile p' ap' ]

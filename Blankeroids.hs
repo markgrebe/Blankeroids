@@ -64,11 +64,7 @@ handleKeyEvents blankEvent = do
 --   game object which tracks score, and the wait object which asks
 --   the user to press any key.
 initialObjects :: RandomGen g => g -> SF (Event GameEvent) (IL Object)
-initialObjects g = playGame (listToIL [waitSF, gameSF])
-  where
-    (g', g'') = split g
-    waitSF = waitingUser g' theWait
-    gameSF = playingGame g'' theGame
+initialObjects g = playGame (listToIL [waitingUser g theWait])
 
 -- Main signal game signal function, looping the object data structures back in
 -- as inputs.
