@@ -62,7 +62,7 @@ initAsteroid round' = do
                         done   = NoEvent,
                         spawn  = NoEvent,
                         basePoly = asterPolygons !! asterIndex,
-                        poly   = asterPolygons !! asterIndex
+                        polys   = [asterPolygons !! asterIndex]
                     }
 
 -- Create smaller asteroids at the position of an asteroid that
@@ -98,7 +98,7 @@ newAsteroids p currgen round' = do
                 radius = sizeScale * asterGen1Rad,
                 reqReanimate = False, done = NoEvent, spawn = Event [],
                 basePoly = scalePoly sizeScale (asterPolygons !! asterIndex),
-                poly = scalePoly sizeScale (asterPolygons !! asterIndex)}
+                polys = [scalePoly sizeScale (asterPolygons !! asterIndex)]}
 
 -- Generate the asteroids for a round, specifying the count and round number.
 initAsteroids :: RandomGen g => Int -> Int -> Rand g [Object]
@@ -133,9 +133,9 @@ movingAsteroid g a = proc ev -> do
     -- next round of asteroids.  This occurs if this asteroid is the last in
     -- the round to be destroyed, and occurs 5 seconds after the destruction.
     reqReanimate' <- accumHoldBy destroyedOccured False <<< delayEvent 5.0 -< ev
-    returnA -< a { poly = if (destroyed') then []
-                          else transformPoly angPos'
-                                    (pos2Point pos') (basePoly a),
+    returnA -< a { polys = if (destroyed') then []
+                           else [transformPoly angPos'
+                                    (pos2Point pos') (basePoly a)],
                    pos = pos', angPos = angPos',
                    reqReanimate = reqReanimate',
                    -- Asteroid SF shold be removed from list if it received
@@ -192,7 +192,7 @@ movingAsteroid g a = proc ev -> do
         angle' <- getRandomR(0.0, 2*pi)
         return (movingDebris
                 Debris { basePoly = dustPolygon, poly = dustPolygon, pos = p,
-                         vel = vector2 (vel' * sin angle') (vel' * cos angle'),
+                         vel = vector2 (vel' * cos angle') (vel' * sin angle'),
                          life = life', done = NoEvent, spawn = NoEvent } )
 
 ---------------------------------------------------

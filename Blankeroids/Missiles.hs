@@ -19,7 +19,7 @@ movingMissile m = proc ev -> do
     pos' <- ((pos m) ^+^) ^<< integral -< (vel m)
     -- Missile self destructs after a certain lifetime
     done' <- after missileLife () -< ()
-    returnA -< m {poly = translatePoly (pos2Point pos') (basePoly m),
+    returnA -< m {poly = translatePoly (pos2Point pos') missilePolygon,
                   pos = pos', done = merge done' (destroyedToUnit ev)}
 
 ---------------------------------------------------

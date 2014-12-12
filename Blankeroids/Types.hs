@@ -17,7 +17,7 @@ type Edge = (Point, Point)
 ---------------------------------------------------
 
 data Object = Asteroid { basePoly :: Polygon,
-                         poly   :: Polygon,
+                         polys  :: [Polygon],
                          pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
@@ -29,9 +29,7 @@ data Object = Asteroid { basePoly :: Polygon,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
-            | Ship     { basePoly :: Polygon,
-                         poly   :: Polygon,
-                         thrustPoly :: Polygon,
+            | Ship     { polys  :: [Polygon],
                          pos    :: Position,
                          vel    :: Velocity,
                          angPos :: AngPosition,
@@ -42,10 +40,21 @@ data Object = Asteroid { basePoly :: Polygon,
                          reanimate :: Event(),
                          spawn  :: Event [SFObject]
                        }
-            | Missile  { basePoly :: Polygon,
-                         poly   :: Polygon,
+            | Saucer    { polys :: [Polygon],
                          pos    :: Position,
                          vel    :: Velocity,
+                         course :: Int,
+                         courses :: [AngPosition],
+                         fireAng :: Int,
+                         fireAngs :: [AngPosition],
+                         radius :: Double,
+                         done   :: Event (),
+                         spawn  :: Event [SFObject]
+                       }
+            | Missile  { poly   :: Polygon,
+                         pos    :: Position,
+                         vel    :: Velocity,
+                         source :: MissileSource,
                          done   :: Event (),
                          spawn  :: Event [SFObject]
                        }
@@ -69,6 +78,8 @@ data Object = Asteroid { basePoly :: Polygon,
                          spawn  :: Event [SFObject]
                        }
 
+data MissileSource = ShipMissile | SaucerMissile
+
 -- Utility functions for determinine type of Object data structure.
 
 isWait :: Object -> Bool
@@ -83,13 +94,32 @@ isGame obj = case obj of
 
 isShip :: Object -> Bool
 isShip obj = case obj of
-    Ship _ _ _ _ _ _ _ _ _ _ _ _ -> True
-    _                            -> False
+    Ship _ _ _ _ _ _ _ _ _ _ -> True
+    _                        -> False
+
+isSaucer :: Object -> Bool
+isSaucer obj = case obj of
+    Saucer _ _ _ _ _ _ _ _ _ _ -> True
+    _                          -> False
 
 isMissile :: Object -> Bool
 isMissile obj = case obj of
     Missile _ _ _ _ _ _ -> True
     _                   -> False
+
+isShipMissile :: Object -> Bool
+isShipMissile obj = case obj of
+    Missile _ _ _ s _ _ -> case s of
+                                ShipMissile -> True
+                                SaucerMissile -> False
+    _                     -> False
+
+isSaucerMissile :: Object -> Bool
+isSaucerMissile obj = case obj of
+    Missile _ _ _ s _ _ -> case s of
+                                ShipMissile -> False
+                                SaucerMissile -> True
+    _                     -> False
 
 isAsteroid :: Object -> Bool
 isAsteroid obj = case obj of

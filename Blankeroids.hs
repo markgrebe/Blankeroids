@@ -18,6 +18,7 @@ import Blankeroids.Graphics
 import Blankeroids.Polygons
 import Blankeroids.Types
 import Blankeroids.Asteroids
+import Blankeroids.Saucer
 import Blankeroids.Game
 import Blankeroids.Wait
 
@@ -63,10 +64,11 @@ handleKeyEvents blankEvent = do
 --   game object which tracks score, and the wait object which asks
 --   the user to press any key.
 initialObjects :: RandomGen g => g -> SF (Event GameEvent) (IL Object)
-initialObjects g = playGame (listToIL [waitSF g, gameSF])
+initialObjects g = playGame (listToIL [waitSF, gameSF])
   where
-    waitSF g' = waitingUser g' theWait
-    gameSF = playingGame theGame
+    (g', g'') = split g
+    waitSF = waitingUser g' theWait
+    gameSF = playingGame g'' theGame
 
 -- Main signal game signal function, looping the object data structures back in
 -- as inputs.
@@ -89,10 +91,14 @@ route (keyEv,objs) sfs = mapIL route' sfs
   where
     -- Ship data structures
     ships = assocsIL $ filterIL (\(_, obj) -> isShip obj) objs
+    -- Saucer data structures
+    saucers = assocsIL $ filterIL (\(_, obj) -> isSaucer obj) objs
     -- Asteroid data structures
     asteroids = assocsIL $ filterIL (\(_, obj) -> isAsteroid obj) objs
     -- Misile data structures
-    missiles = assocsIL $ filterIL (\(_, obj) -> isMissile obj) objs
+    shipMissiles = assocsIL $ filterIL (\(_, obj) -> isShipMissile obj) objs
+    -- Misile data structures
+    saucerMissiles = assocsIL $ filterIL (\(_, obj) -> isSaucerMissile obj) objs
     -- Game data structures
     games = assocsIL $ filterIL (\(_, obj) -> isGame obj) objs
     -- First ship key
@@ -106,28 +112,28 @@ route (keyEv,objs) sfs = mapIL route' sfs
     -- Game data structure
     gameObj = fromJust $ lookupIL (fromJust game') objs
 
-    -- Calculate the list of Ships and Asteroids which intersect
-    sAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
-    sAsHits ((sk, so):[]) ((ak,ao):rest) =
-      if polygonInPolygon (poly so) (poly ao)
-      then (sk, ak) : (sAsHits [(sk, so)] rest)
-      else sAsHits [(sk, so)] rest
-    sAsHits _        _              = []
+    -- Calculate the list of Ships and Objects which intersect
+    sObjHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey,ILKey)]
+    sObjHits ((sk, so):[]) ((ak,ao):rest) =
+      if polygonsInPolygons (polys so) (polys ao)
+      then (sk, ak) : (sObjHits [(sk, so)] rest)
+      else sObjHits [(sk, so)] rest
+    sObjHits _        _              = []
 
-    -- Calculate the list of Missile and Asteroid collisions from a single
+    -- Calculate the list of Missile and Object collisions from a single
     -- missile
-    mAsHits :: (ILKey, Object) -> [(ILKey, Object)] -> [(ILKey,ILKey)]
-    mAsHits _        []             = []
-    mAsHits (mk, mo) ((ak,ao):rest) =
-      if pointInPolygon (pos2Point (pos mo)) (poly ao)
-      then (mk, ak) : (mAsHits (mk, mo) rest)
-      else mAsHits (mk, mo) rest
+    mObjHits :: (ILKey, Object) -> [(ILKey, Object)] -> [(ILKey,ILKey)]
+    mObjHits _        []             = []
+    mObjHits (mk, mo) ((ok,oo):rest) =
+      if pointInPolygons (pos2Point (pos mo)) (polys oo)
+      then (mk, ok) : (mObjHits (mk, mo) rest)
+      else mObjHits (mk, mo) rest
 
-    -- Calculate the list of Missile and Asteroid collisions from all
+    -- Calculate the list of Missile and Object collisions from all
     -- missile
-    msAsHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey, ILKey)]
-    msAsHits []     _  = []
-    msAsHits (m:ms) as = (mAsHits m as) ++ (msAsHits ms as)
+    msObjHits :: [(ILKey, Object)] -> [(ILKey, Object)] -> [(ILKey, ILKey)]
+    msObjHits []     _  = []
+    msObjHits (m:ms) as = (mObjHits m as) ++ (msObjHits ms as)
 
     -- Calculate the value of a destroyed asteroid
     getAsteroidValue :: ILKey -> Int
@@ -135,13 +141,17 @@ route (keyEv,objs) sfs = mapIL route' sfs
       where
         obj = fromJust $ lookupIL k objs
 
+    -- Calculate the value of a destroyed saucer
+    getSaucerValue :: ILKey -> Int
+    getSaucerValue _ = saucerValue
+
     -- Function which takes a list of asteroid associations, and makes sure
     -- none of the asteroids are in the safe zone around where the ship will
     -- be reanimated.
     safeToReanimate :: [(ILKey, Object)] -> Bool
     safeToReanimate []             = True
     safeToReanimate ((_,ao):rest) =
-        if polygonInPolygon (poly ao) safeZone
+        if polygonInPolygons safeZone (polys ao)
         then False
         else safeToReanimate rest
       where
@@ -152,17 +162,44 @@ route (keyEv,objs) sfs = mapIL route' sfs
                     (0.5 + safeDistance, 0.5 - safeDistance),
                     (0.5 - safeDistance, 0.5 - safeDistance)]
 
-    (missileHits, asteroidMissileHits) = unzip $ msAsHits missiles asteroids
-    (shipHits, asteroidShipHits) = unzip $ sAsHits ships asteroids
-    asteroidHits = nub $ asteroidMissileHits ++ asteroidShipHits
+    (shipMissileAsteroidsHits, asteroidShipMissileHits) =
+        unzip $ msObjHits shipMissiles asteroids
+    (saucerMissileAsteroidHits, asteroidSaucerMissileHits) =
+        unzip $ msObjHits saucerMissiles asteroids
+    (shipMissileSaucerHits, saucerShipMissileHits) =
+        unzip $ msObjHits shipMissiles saucers
+    (saucerMissileShipHits, shipSaucerMissileHits) =
+        unzip $ msObjHits saucerMissiles ships
+    (shipAsteroidHits, asteroidShipHits) = unzip $ sObjHits ships asteroids
+    (saucerAsteroidHits, asteroidSaucerHits) = unzip $ sObjHits saucers asteroids
+    (shipSaucerHits, saucerShipHits) = unzip $ sObjHits ships saucers
+    shipMissileHits = shipMissileAsteroidsHits ++ shipMissileSaucerHits
+    saucerMissileHits = saucerMissileAsteroidHits ++ saucerMissileShipHits
+
+    -- Unique Asteroids destroyed
+    asteroidHits = nub $ asteroidShipMissileHits ++ asteroidSaucerMissileHits ++
+                         asteroidShipHits ++ asteroidSaucerHits
     -- Unique missiles destroyed
-    missileHits' = nub missileHits
+    missileHits = nub $ shipMissileHits ++ saucerMissileHits
     -- Unique Ships destoryed
-    shipHits' = nub shipHits
-    allHits = asteroidHits ++ missileHits' ++ shipHits'
-    -- All asteroids destroyed??
+    shipHits = nub $ shipAsteroidHits ++
+                     shipSaucerMissileHits ++ shipSaucerHits
+    -- Unique Saucers destoryed
+    saucerHits = nub $ saucerAsteroidHits ++
+                       saucerShipMissileHits ++ saucerShipHits
+    -- List of all destroyed objects
+    allHits = asteroidHits ++ missileHits ++ shipHits ++ saucerHits
+
+    -- Find the values of asteroids and saucers destroyed by the ship, and
+    -- calculate the updated score
+    asteroidScoreHits = nub $ asteroidShipMissileHits ++ asteroidShipHits
+    saucerScoreHits = saucerShipMissileHits ++ saucerShipHits
+    scoreChanged' = sum $ map getAsteroidValue asteroidScoreHits ++
+                          map getSaucerValue saucerScoreHits
+
+    -- Have all asteroids been destroyed??
     roundComplete = length asteroidHits == length asteroids
-    scoreChanged' = sum $ map getAsteroidValue asteroidHits
+
     shipDestroyed' = length shipHits /= 0
 
     route' :: (ILKey, sf) -> (Event GameEvent, sf)

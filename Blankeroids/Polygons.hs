@@ -30,6 +30,9 @@ translatePoly dp polygon = map translatePoint polygon
   where
     translatePoint p = (fst p + fst dp, snd p + snd dp)
 
+translatePolys :: Point -> [Polygon] -> [Polygon]
+translatePolys dp polygons = map (translatePoly dp) polygons
+
 transformPoly :: AngPosition -> Point -> Polygon -> Polygon
 transformPoly ang dp = (translatePoly dp).(rotatePoly ang)
 
@@ -56,6 +59,16 @@ pointInPolygon point polygon = foldr acumNode False (polyEdges polygon)
         polY1 = snd $ fst ed
         polY2 = snd $ snd ed
 
+pointInPolygons :: Point -> [Polygon] -> Bool
+pointInPolygons point polygons = or $ map (pointInPolygon point) polygons
+
 -- Return a boolean indicating if polygons intersect
 polygonInPolygon :: Polygon -> Polygon -> Bool
 polygonInPolygon poly1 poly2 = or $ map (flip pointInPolygon poly2) poly1
+
+polygonInPolygons :: Polygon -> [Polygon] -> Bool
+polygonInPolygons poly' polys' = or $ map (polygonInPolygon poly') polys'
+
+polygonsInPolygons :: [Polygon] -> [Polygon] -> Bool
+polygonsInPolygons polys1 polys2 = or $ map (flip polygonInPolygons polys1) polys2
+

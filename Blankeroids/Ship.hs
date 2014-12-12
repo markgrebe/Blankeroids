@@ -19,8 +19,7 @@ shipDrag      :: Double
 shipDrag      = 3.0
 
 theShip :: Object
-theShip = Ship {basePoly = shipPolygon, poly = shipPolygon,
-                thrustPoly = thrustPolygon,
+theShip = Ship {polys = [shipPolygon],
                 pos = vector2 0.5 0.5, vel = vector2 0.0 0.0,
                 angPos = 0.0, radius = 0.016, thrusting = False,
                 done = NoEvent, reqReanimate = False,
@@ -56,12 +55,14 @@ movingShip g s = proc ev -> do
     -- Calculate the xy position, based on integral of velocity, wrappnig
     -- at the edge of the screen as required.
     pos' <- wrapObject (radius s) <<< ((pos s) ^+^) ^<< integral -< vel'
-    returnA -< s { poly = if (destroyed') then []
-                          else transformPoly angPos'
-                                (pos2Point pos') (basePoly s),
-                   thrustPoly = if (destroyed' || not thrusting') then []
-                                else transformPoly angPos' (pos2Point pos')
-                                     thrustPolygon,
+    returnA -< s { polys = if (destroyed')
+                           then []
+                           else [transformPoly angPos'
+                                  (pos2Point pos') shipPolygon] ++
+                                if thrusting'
+                                then [transformPoly angPos' (pos2Point pos')
+                                      thrustPolygon]
+                                else [],
                    pos = pos', vel = vel', angPos = angPos',
                    thrusting = thrusting',
                    -- Request a reanimation event if done with destroyed timeout
@@ -101,8 +102,8 @@ movingShip g s = proc ev -> do
     addMissile p' ap' = [movingMissile $ newMissile p' ap']
 
     newMissile :: Position -> AngPosition -> Object
-    newMissile p' ap' = Missile { basePoly = missilePolygon,
-                            poly = missilePolygon,
+    newMissile p' ap' = Missile { poly = missilePolygon,
+                            source = ShipMissile,
                             pos = vector2 ((vector2X p') - 0.016 * sin ap')
                                           ((vector2Y p') + 0.016 * cos ap'),
                             vel = vector2 (-missileVel * sin ap')
@@ -141,8 +142,7 @@ movingShip g s = proc ev -> do
         return (vector2 x y)
 
     newShip :: AngPosition -> Bool -> Object
-    newShip ap'' h'' = Ship {basePoly = shipPolygon, poly = shipPolygon,
-                         thrustPoly = thrustPolygon,
+    newShip ap'' h'' = Ship {polys = [shipPolygon],
                          pos = startPos, vel = vector2 0.0 0.0,
                          angPos = ap'', radius = 0.016, thrusting = False,
                          done = NoEvent, reqReanimate = False,

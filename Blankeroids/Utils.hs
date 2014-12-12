@@ -19,7 +19,7 @@ randGenList g = g' : randGenList g''
 -- of type Destroyed.
 destroyedToUnit :: Event GameEvent -> Event ()
 destroyedToUnit (Event Destroyed) = Event ()
-destroyedToUnit _                     = NoEvent
+destroyedToUnit _                 = NoEvent
 
 -- Utility function to filter GameEvent event into a unit Event if it is
 -- of type Reanimate.
@@ -39,5 +39,18 @@ wrapObject objRadius = proc objPos -> do
                            then wrap x else x)
                           (if y <= minCoord || y >= maxCoord
                            then wrap y else y)
+    returnA -< objPos'
+
+-- Utility Signal Function to wrap an object's position from one edge of
+-- the screen to the other when it passes beyond the edge for vertical edges
+-- only
+wrapObjectY :: Double -> SF Position Position
+wrapObjectY objRadius = proc objPos -> do
+    let minCoord = -objRadius
+        maxCoord = 1.0 + objRadius
+        wrap a = a `mod'` (1.0 + 2.0 * objRadius)
+        (x,y) = vector2XY objPos
+        objPos' = vector2 x (if y <= minCoord || y >= maxCoord
+                             then wrap y else y)
     returnA -< objPos'
 
