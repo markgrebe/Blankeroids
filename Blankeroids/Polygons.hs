@@ -67,9 +67,9 @@ pointInPolygons point polygons = or $ map (pointInPolygon point) polygons
 polygonInPolygon :: Polygon -> Polygon -> Bool
 polygonInPolygon poly1 poly2 = or $ map (flip pointInPolygon poly2) poly1
 
-polygonInPolygons :: Polygon -> [Polygon] -> Bool
-polygonInPolygons poly' polys' = polygonInPolygon poly' (nub (concat polys'))
-
+-- Since all of the game polygon arrays are adjacent, we can use the
+-- simplifiying assumption that we can merge the arrays and eliminate duplicate
+-- points
 polygonsInPolygons :: [Polygon] -> [Polygon] -> Bool
 polygonsInPolygons polys1 polys2 = polygonInPolygon (nub (concat polys1))
                                                     (nub (concat polys2))

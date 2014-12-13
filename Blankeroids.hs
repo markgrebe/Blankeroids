@@ -157,7 +157,7 @@ route (keyEv,objs) sfs = mapIL route' sfs
     safeToReanimate :: [(ILKey, Object)] -> Bool
     safeToReanimate []             = True
     safeToReanimate ((_,ao):rest) =
-        if polygonInPolygons safeZone (polys ao)
+        if or $ map (flip polygonInPolygon safeZone) (polys ao)
         then False
         else safeToReanimate rest
       where
