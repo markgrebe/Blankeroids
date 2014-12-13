@@ -19,7 +19,7 @@ import Blankeroids.Polygons
 import Blankeroids.Types
 import Blankeroids.Asteroids
 import Blankeroids.Saucer
-import Blankeroids.Wait
+import Blankeroids.Game
 
 ---------------------------------------------------
 main :: IO ()
@@ -251,10 +251,16 @@ route (keyEv,objs) sfs = mapIL route' sfs
 -- the output data structures.
 killOrSpawn :: ((Event GameEvent, IL Object) , IL Object) ->
                     Event (IL SFObject -> IL SFObject)
-killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (doneEvents ++ spawnEvents)
+killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (spawnEvents ++ doneEvents)
   where
+    deleteAllIL :: IL SFObject -> IL SFObject
+    deleteAllIL _ = emptyIL
+
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
-    doneEvents = [ (done obj) `tag` (deleteIL k) | (k,obj) <- assocsIL objs ]
+    doneEvents = [ if isGame obj
+                   then (done obj) `tag` (deleteAllIL)
+                   else (done obj) `tag` (deleteIL k) |
+                   (k,obj) <- assocsIL objs ]
 
     spawnEvents :: [Event (IL SFObject -> IL SFObject)]
     spawnEvents = [ fmap (foldl (.) id . map insertIL_) (spawn obj) |

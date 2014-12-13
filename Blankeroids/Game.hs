@@ -6,6 +6,41 @@ import FRP.Yampa
 
 import Blankeroids.Types
 import Blankeroids.Saucer
+import Blankeroids.Graphics
+import Blankeroids.Polygons
+import Blankeroids.Ship
+import Blankeroids.Asteroids
+
+theWait :: Object
+theWait = Wait {polys = [], done = NoEvent, spawn = NoEvent }
+
+waitingUser :: RandomGen g => g -> Object -> SFObject
+waitingUser g wa = proc ev -> do
+    onOff <- accumHoldBy (\a b -> a /= b) True <<< repeatedly 1.0 True -< ()
+    returnA -< wa {polys = if onOff then placedPressAnyPolygons else [],
+                   done = ev `tag` (),
+                   spawn = ev `tag` gameObjects}
+  where
+    (g1,g2) = split g
+    (g3,g4) = split g1
+    (g5,g6) = split g2
+    aSFs = movingRandomAsteroids g3 (genInitialAsteroids g4)
+    shipSF = movingShip g5 theShip
+    gameSF = playingGame g6 theGame
+    gameObjects = [shipSF, gameSF] ++ aSFs
+    placedPressAnyPolygons :: [Polygon]
+    placedPressAnyPolygons = map translatePolyPair
+                                (zip pressAnyPositions pressAnyPolygons)
+    translatePolyPair :: (Point, Polygon) -> Polygon
+    translatePolyPair (pt,pol) = translatePoly pt pol
+    pressAnyPolygons :: [Polygon]
+    pressAnyPolygons = [letterPPolygon, letterRPolygon, letterEPolygon,
+                        letterSPolygon, letterSPolygon, letterSpacePolygon,
+                        letterAPolygon, letterNPolygon, letterYPolygon,
+                        letterSpacePolygon, letterKPolygon, letterEPolygon,
+                        letterYPolygon]
+    pressAnyPositions :: [Point]
+    pressAnyPositions = zip [0.260,0.300..0.780] (take 13 $ repeat 0.75)
 
 bonusScore :: Int
 bonusScore = 8000
@@ -19,12 +54,17 @@ playingGame g gm = proc ev -> do
     (score',lives') <- accumHoldBy accumScoreLives (0,3) -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
     gameOver' <- hold False <<< edgeTag True -< lives' <= 0
-    createSaucer <- after (randomTime g') () -< ()
+    nextGame <- delayEvent 10.0 <<< edge -< gameOver'
+    createSaucer <- after (randomTime g2) () -< ()
     returnA -< gm { score = score', lives = lives', theRound = round',
                     gameOver = gameOver',
-                    spawn = createSaucer `tag` newSaucer g'' 0}
+                    done = nextGame,
+                    spawn = mergeBy (++)
+                            (createSaucer `tag` newSaucer g3 0)
+                            (nextGame `tag` [waitingUser g4 theWait])}
   where
-    (g', g'') = split g
+    (g1, g2) = split g
+    (g3, g4) = split g1
 
     accumScoreLives :: (Int, Int) -> GameEvent -> (Int, Int)
     accumScoreLives (startScore, startLives) GameChange { scoreChanged = s,
