@@ -54,11 +54,10 @@ playingGame g gm = proc ev -> do
     (score',lives') <- accumHoldBy accumScoreLives (0,3) -< ev
     round' <- accumHoldBy accumRounds 1 -< ev
     gameOver' <- hold False <<< edgeTag True -< lives' <= 0
-    nextGame <- delayEvent 10.0 <<< edge -< gameOver'
+    nextGame <- delayEvent 2.0 <<< edge -< gameOver'
     createSaucer <- after (randomTime g2) () -< ()
     returnA -< gm { score = score', lives = lives', theRound = round',
                     gameOver = gameOver',
-                    done = nextGame,
                     spawn = mergeBy (++)
                             (createSaucer `tag` newSaucer g3 0)
                             (nextGame `tag` [waitingUser g4 theWait])}

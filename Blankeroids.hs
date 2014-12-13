@@ -63,7 +63,14 @@ handleKeyEvents blankEvent = do
 --   game object which tracks score, and the wait object which asks
 --   the user to press any key.
 initialObjects :: RandomGen g => g -> SF (Event GameEvent) (IL Object)
-initialObjects g = playGame (listToIL [waitingUser g theWait])
+initialObjects g = playGame (listToIL gameObjects)
+  where
+    (g1,g2) = split g
+    (g3,g4) = split g1
+    aSFs = movingRandomAsteroids g2 (genInitialAsteroids g4)
+    gameSF = playingGame g3 theGame
+    waitSF = waitingUser g4 theWait
+    gameObjects = [waitSF, gameSF] ++ aSFs
 
 -- Main signal game signal function, looping the object data structures back in
 -- as inputs.
@@ -257,7 +264,7 @@ killOrSpawn (_, objs) = foldl (mergeBy (.)) noEvent (spawnEvents ++ doneEvents)
     deleteAllIL _ = emptyIL
 
     doneEvents :: [Event (IL SFObject -> IL SFObject)]
-    doneEvents = [ if isGame obj
+    doneEvents = [ if isWait obj
                    then (done obj) `tag` (deleteAllIL)
                    else (done obj) `tag` (deleteIL k) |
                    (k,obj) <- assocsIL objs ]
