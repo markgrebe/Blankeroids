@@ -15,13 +15,20 @@ normalObjectWidth = 0.002
 debrisWidth :: Double
 debrisWidth = 0.001
 
+renderScene :: IL Object -> (Canvas (), IO ())
+renderScene a = (renderCanvasScene a, renderIOScene a)
+
 -- | A Canvas action to render the entire scene.
-renderScene :: IL Object -> Canvas ()
-renderScene a = do
+renderCanvasScene :: IL Object -> Canvas ()
+renderCanvasScene a = do
     scaleScene
     fillStyle "black"
     fillRect(0.0,0.0,1.0,1.0)
     renderObjects (elemsIL a)
+    return ()
+
+renderIOScene :: IL Object -> IO ()
+renderIOScene a = do
     return ()
 
 -- | We scale such that (0,0) is the bottom-left of the canvas and (1,1)
